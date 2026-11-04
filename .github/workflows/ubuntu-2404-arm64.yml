@@ -3,7 +3,7 @@ name: Ubuntu 24.04 Qt 6 ARM64 DEB
 on:
   workflow_dispatch:
   push:
-    branches: [feature/windows-qt6]
+    branches: [feature/ubuntu-qt6-arm64]
     paths:
       - '.github/workflows/ubuntu-2404-arm64.yml'
       - 'CMakeLists.txt'
@@ -63,17 +63,27 @@ jobs:
           mkdir -p debian
           cp /tmp/fwb-stage/DEBIAN/control debian/control
           dpkg-shlibdeps -O -e/tmp/fwb-stage/usr/bin/fwbuilder -e/tmp/fwb-stage/usr/bin/fwb_ipt | sed -n 's/^shlibs:Depends=//p' > /tmp/fwb-deps
-          if test -s /tmp/fwb-deps; then
-            printf 'Depends: %s\n' "$(cat /tmp/fwb-deps)" >> /tmp/fwb-stage/DEBIAN/control
-          fi
+          test -s /tmp/fwb-deps
+          grep -q 'libxml2' /tmp/fwb-deps
+          grep -q 'libqt6core6t64' /tmp/fwb-deps
+          printf 'Depends: %s\\n' "$(cat /tmp/fwb-deps)" >> /tmp/fwb-stage/DEBIAN/control
           dpkg-deb --build /tmp/fwb-stage fwbuilder-6.0.0-ubuntu24.04-arm64.deb
       - name: Verify DEB architecture and ELF dependencies
         run: |
           test "$(dpkg-deb -f fwbuilder-6.0.0-ubuntu24.04-arm64.deb Architecture)" = arm64
-          sudo apt-get install -y ./fwbuilder-6.0.0-ubuntu24.04-arm64.deb
-          file /usr/bin/fwbuilder
-          ldd /usr/bin/fwbuilder
-          ! ldd /usr/bin/fwbuilder | grep -q 'not found'
+          set -eux
+          dpkg-deb -f fwbuilder-6.0.0-ubuntu24.04-arm64.deb Depends | tee /tmp/depends.txt
+          grep -q 'libxml2' /tmp/depends.txt
+          grep -q 'libqt6core6t64' /tmp/depends.txt
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/packages:ro" ubuntu:24.04 bash -euxc '
+              apt-get update
+              apt-get install -y /packages/fwbuilder-6.0.0-ubuntu24.04-arm64.deb
+              dpkg --print-architecture | grep -qx arm64
+              file /usr/bin/fwbuilder || true
+              ldd /usr/bin/fwbuilder | tee /tmp/fwb-ldd
+              ! grep -q "not found" /tmp/fwb-ldd
+            '
       - uses: actions/upload-artifact@v4
         with:
           name: fwbuilder-ubuntu24.04-arm64
