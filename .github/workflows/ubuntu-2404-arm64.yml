@@ -41,10 +41,6 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr
       - name: Build
         run: cmake --build build-linux --parallel 2
-      - name: Package native ARM64 DEB
-        run: |
-          cmake --install build-linux --prefix /usr --strip --component Unspecified --destdir /tmp/fwb-stage
-        continue-on-error: true
       - name: Stage and build DEB
         run: |
           set -eux
@@ -64,7 +60,9 @@ jobs:
           Maintainer: Firewall Builder contributors <noreply@github.com>
           Description: Firewall Builder Qt 6 GUI and firewall compilers
           EOF
-          dpkg-shlibdeps -O /tmp/fwb-stage/usr/bin/fwbuilder /tmp/fwb-stage/usr/bin/fwb_ipt 2>/dev/null | sed -n 's/^shlibs:Depends=//p' > /tmp/fwb-deps
+          mkdir -p debian
+          cp /tmp/fwb-stage/DEBIAN/control debian/control
+          dpkg-shlibdeps -O -e/tmp/fwb-stage/usr/bin/fwbuilder -e/tmp/fwb-stage/usr/bin/fwb_ipt | sed -n 's/^shlibs:Depends=//p' > /tmp/fwb-deps
           if test -s /tmp/fwb-deps; then
             printf 'Depends: %s\n' "$(cat /tmp/fwb-deps)" >> /tmp/fwb-stage/DEBIAN/control
           fi
