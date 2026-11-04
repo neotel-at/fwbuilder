@@ -1,0 +1,66 @@
+name: Windows Qt 6 AMD64 and ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/windows-qt6]
+  pull_request:
+    paths:
+      - '.github/workflows/windows-qt6.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            triplet: x64-windows
+            qt_arch: win64_msvc2022_64
+            cmake_arch: x64
+          - arch: arm64
+            triplet: arm64-windows
+            qt_arch: win64_msvc2022_arm64
+            cmake_arch: ARM64
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+      - name: Install vcpkg libraries
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install "libxml2:${{ matrix.triplet }}" "libxslt:${{ matrix.triplet }}" "openssl:${{ matrix.triplet }}" "zlib:${{ matrix.triplet }}" "liblzma:${{ matrix.triplet }}"
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-win -G "Visual Studio 17 2022" -A ${{ matrix.cmake_arch }} -DUseQt6=ON -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+      - name: Build
+        run: cmake --build build-win --config Release --parallel 2
+      - name: Stage portable distribution
+        shell: pwsh
+        run: |
+          cmake --install build-win --config Release
+          $release = Join-Path (Resolve-Path build-win) 'release'
+          if (!(Test-Path (Join-Path $release 'fwbuilder.exe'))) { throw 'fwbuilder.exe missing from install' }
+          $deploy = Join-Path $env:Qt6_DIR '../../../bin/windeployqt.exe'
+          $deploy = [System.IO.Path]::GetFullPath($deploy)
+          if (!(Test-Path $deploy)) { $deploy = (Get-Command windeployqt.exe -ErrorAction Stop).Source }
+          & $deploy --release --no-translations (Join-Path $release 'fwbuilder.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
+          Compress-Archive -Path "$release/*" -DestinationPath "fwbuilder-6.0-win-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fwbuilder-6.0-win-${{ matrix.arch }}
+          path: fwbuilder-6.0-win-${{ matrix.arch }}.zip
+          if-no-files-found: error
