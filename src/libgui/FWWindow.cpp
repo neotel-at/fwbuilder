@@ -644,6 +644,9 @@ void FWWindow::fileOpen()
     QString dir;
     QMdiSubWindow *last_active_window = m_mainWindow->m_space->activeSubWindow();
 
+    // Work around native Cocoa file dialog issues on recent macOS versions.
+    // Qt checks this attribute when creating subsequent QFileDialog instances.
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QString file_name = QFileDialog::getOpenFileName(
         this,
         tr("Open File"),

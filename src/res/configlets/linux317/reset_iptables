@@ -20,7 +20,7 @@ reset_iptables_v4() {
 
   while read table; do
       list=$($IPTABLES {{$opt_wait}} -t $table -L -n)
-      printf "%s" "$list" | while read c chain rest; do
+      printf '%s\n' "$list" | while read c chain rest; do
       if test "X$c" = "XChain" ; then
         $IPTABLES {{$opt_wait}} -t $table -F $chain
       fi
@@ -38,7 +38,7 @@ reset_iptables_v6() {
 
   while read table; do
       list=$($IP6TABLES {{$opt_wait}} -t $table -L -n)
-      printf "%s" "$list" | while read c chain rest; do
+      printf '%s\n' "$list" | while read c chain rest; do
       if test "X$c" = "XChain" ; then
         $IP6TABLES {{$opt_wait}} -t $table -F $chain
       fi
