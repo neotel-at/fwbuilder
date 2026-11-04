@@ -85,6 +85,13 @@ set_source_files_properties(Constants.cpp PROPERTIES COMPILE_DEFINITIONS RES_DIR
 
 add_library(fwbuilder STATIC ${libfwbuilder_srcs})
 
+# XMLTools.cpp includes zlib, libxml2 and libxslt headers directly.
+# Export these usage requirements to dependents on all platforms.
+target_link_libraries(fwbuilder PUBLIC
+    ZLIB::ZLIB
+    LibXml2::LibXml2
+    LibXslt::LibXslt)
+
 target_include_directories(fwbuilder PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
     ${LIBXML2_INCLUDE_DIR})
