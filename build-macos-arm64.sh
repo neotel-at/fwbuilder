@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Firewall Builder 6 - native Apple Silicon / Homebrew Qt 5
+# Firewall Builder 6 - native Apple Silicon / Homebrew Qt 5 or Qt 6
 # --build (default): configure + incremental build
 # --install: build + install + ad-hoc sign development bundle
 # --dmg: build + install + standalone deployment + sign + DMG
-MODE="${1:---build}"
+QT_VERSION=5
+MODE=--build
+for arg in "$@"; do
+  case "$arg" in
+    --qt5) QT_VERSION=5 ;;
+    --qt6) QT_VERSION=6 ;;
+    --configure-only|--build|--install|--dmg) MODE="$arg" ;;
+    *) echo "Usage: $0 [--qt5|--qt6] [--configure-only|--build|--install|--dmg]" >&2; exit 2 ;;
+  esac
+done
 case "$MODE" in
   --configure-only|--build|--install|--dmg) ;;
   *) echo "Usage: $0 [--configure-only|--build|--install|--dmg]" >&2; exit 2 ;;
 esac
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD="$ROOT/build-arm64"
+if [[ "$QT_VERSION" == 6 ]]; then BUILD="$ROOT/build-arm64-qt6"; else BUILD="$ROOT/build-arm64"; fi
 PREFIX="$BUILD/install"
 RELEASE="$BUILD/release"
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -26,11 +35,25 @@ BREW_PREFIX="$(brew --prefix)"
 [[ "$BREW_PREFIX" == "/opt/homebrew" ]] || fail "Expected ARM64 Homebrew at /opt/homebrew"
 
 info "Checking build dependencies"
-PACKAGES=(cmake ninja pkgconf qt@5 libxml2 libxslt net-snmp openssl@3 brotli)
+PACKAGES=(cmake ninja pkgconf libxml2 libxslt net-snmp openssl@3 brotli)
+if [[ "$QT_VERSION" == 5 ]]; then PACKAGES+=(qt@5); else PACKAGES+=(qtbase qttools); fi
 for pkg in "${PACKAGES[@]}"; do
   if ! brew list --versions "$pkg" >/dev/null 2>&1; then brew install "$pkg"; fi
 done
-QT_PREFIX="$(brew --prefix qt@5)"
+if [[ "$QT_VERSION" == 5 ]]; then
+  QT_PREFIX="$(brew --prefix qt@5)"
+  QT_DEPLOY="$QT_PREFIX/bin/macdeployqt"
+else
+  QT_PREFIX="$(brew --prefix qtbase)"
+  QT_DEPLOY=""
+  for candidate in \
+    "$QT_PREFIX/bin/macdeployqt" \
+    "$(brew --prefix qttools)/bin/macdeployqt" \
+    "$(brew --prefix qttools)/libexec/macdeployqt" \
+    "$BREW_PREFIX/bin/macdeployqt"; do
+    if [[ -x "$candidate" ]]; then QT_DEPLOY="$candidate"; break; fi
+  done
+fi
 XML_PREFIX="$(brew --prefix libxml2)"
 XSLT_PREFIX="$(brew --prefix libxslt)"
 SNMP_PREFIX="$(brew --prefix net-snmp)"
@@ -38,15 +61,21 @@ SSL_PREFIX="$(brew --prefix openssl@3)"
 export PATH="$QT_PREFIX/bin:$BREW_PREFIX/bin:$PATH"
 export PKG_CONFIG_PATH="$XML_PREFIX/lib/pkgconfig:$XSLT_PREFIX/lib/pkgconfig:$SNMP_PREFIX/lib/pkgconfig:$SSL_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export CMAKE_PREFIX_PATH="$QT_PREFIX;$XML_PREFIX;$XSLT_PREFIX;$SNMP_PREFIX;$SSL_PREFIX"
-[[ -f "$QT_PREFIX/lib/cmake/Qt5/Qt5Config.cmake" ]] || fail "Qt5Config.cmake missing"
+[[ -f "$QT_PREFIX/lib/cmake/Qt${QT_VERSION}/Qt${QT_VERSION}Config.cmake" ]] || fail "Qt${QT_VERSION}Config.cmake missing"
+if [[ "$MODE" == "--dmg" ]]; then
+  [[ -n "$QT_DEPLOY" && -x "$QT_DEPLOY" ]] || fail "macdeployqt missing in Qt installation (qtbase/qttools); check: brew list qtbase | grep macdeployqt"
+fi
 
-info "Configuring"
+info "Configuring with Qt $QT_VERSION"
 cmake -S "$ROOT" -B "$BUILD" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=$([[ "$QT_VERSION" == 6 ]] && echo 12.0 || echo 10.9) \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
-  -DQt5_DIR="$QT_PREFIX/lib/cmake/Qt5" \
+  -DUseQt6=$([[ "$QT_VERSION" == 6 ]] && echo ON || echo OFF) \
+  -DCMAKE_CXX_STANDARD=$([[ "$QT_VERSION" == 6 ]] && echo 17 || echo 11) \
+  -DQt${QT_VERSION}_DIR="$QT_PREFIX/lib/cmake/Qt${QT_VERSION}" \
   -DOPENSSL_ROOT_DIR="$SSL_PREFIX" \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 [[ "$MODE" == "--configure-only" ]] && exit 0
@@ -86,8 +115,10 @@ rm -rf "$RELEASE_APP"
 ditto "$APP" "$RELEASE_APP"
 
 info "Deploying Qt frameworks/plugins (already-deployed warning is harmless)"
-"$QT_PREFIX/bin/macdeployqt" "$RELEASE_APP" -no-strip -verbose=1 || \
+"$QT_DEPLOY" "$RELEASE_APP" -no-strip -verbose=1 || \
   echo "WARNING: macdeployqt returned nonzero; checking complete dependency graph next"
+[[ -f "$RELEASE_APP/Contents/PlugIns/platforms/libqcocoa.dylib" ]] || \
+  fail "Qt Cocoa platform plugin missing after macdeployqt"
 
 info "Resolving and embedding all non-system Mach-O dependencies"
 # Python is part of macOS Command Line Tools. This embedded resolver works on the
@@ -243,7 +274,7 @@ rm -rf "$DMGROOT"
 mkdir -p "$DMGROOT"
 ditto "$RELEASE_APP" "$DMGROOT/fwbuilder.app"
 ln -s /Applications "$DMGROOT/Applications"
-DMG="$RELEASE/FirewallBuilder-6.0-arm64.dmg"
+DMG="$RELEASE/FirewallBuilder-6.0-qt${QT_VERSION}-arm64.dmg"
 hdiutil create -volname 'Firewall Builder 6.0' -srcfolder "$DMGROOT" \
   -format UDZO -ov "$DMG"
 info "DMG ready: $DMG"
