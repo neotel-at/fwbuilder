@@ -40,6 +40,7 @@ endif()
 
 find_package(LibXml2 REQUIRED)
 find_package(LibXslt REQUIRED)
+find_package(ZLIB REQUIRED)
 
 find_package(NetSNMP)
 if(NETSNMP_FOUND)
@@ -48,7 +49,11 @@ endif()
 
 ### Compiler options
 
-set(CMAKE_CXX_STANDARD 11)
+if(UseQt6)
+  set(CMAKE_CXX_STANDARD 17)
+else()
+  set(CMAKE_CXX_STANDARD 11)
+endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CXX_DEFAULT_FLAGS # clang/GCC warnings
 	$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>>:-Wall;-Wextra;-Werror;-Wno-overloaded-virtual>
