@@ -58,7 +58,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CXX_DEFAULT_FLAGS # clang/GCC warnings
 	$<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>>:-Wall;-Wextra;-Werror;-Wno-overloaded-virtual>
                          # MSVC warnings
-    $<$<CXX_COMPILER_ID:MSVC>:/WX;/W4>)
+    $<$<CXX_COMPILER_ID:MSVC>:/W4;/Zc:__cplusplus>)
 
 add_definitions(-D__STDC_FORMAT_MACROS)
 
