@@ -1,0 +1,83 @@
+name: Ubuntu 24.04 Qt 6 ARM64 DEB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/windows-qt6]
+    paths:
+      - '.github/workflows/ubuntu-2404-arm64.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+  pull_request:
+    paths:
+      - '.github/workflows/ubuntu-2404-arm64.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            qt6-base-dev qt6-base-dev-tools \
+            libxml2-dev libxslt1-dev zlib1g-dev libssl-dev \
+            libsnmp-dev dpkg-dev file
+      - name: Configure
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DUseQt6=ON -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+      - name: Build
+        run: cmake --build build-linux --parallel 2
+      - name: Package native ARM64 DEB
+        run: |
+          cmake --install build-linux --prefix /usr --strip --component Unspecified --destdir /tmp/fwb-stage
+        continue-on-error: true
+      - name: Stage and build DEB
+        run: |
+          set -eux
+          rm -rf /tmp/fwb-stage
+          DESTDIR=/tmp/fwb-stage cmake --install build-linux --prefix /usr
+          test -x /tmp/fwb-stage/usr/bin/fwbuilder
+          test "$(dpkg --print-architecture)" = arm64
+          file /tmp/fwb-stage/usr/bin/fwbuilder
+          readelf -h /tmp/fwb-stage/usr/bin/fwbuilder | grep -q 'AArch64'
+          mkdir -p /tmp/fwb-stage/DEBIAN
+          cat > /tmp/fwb-stage/DEBIAN/control <<'EOF'
+          Package: fwbuilder
+          Version: 6.0.0~rc1
+          Section: net
+          Priority: optional
+          Architecture: arm64
+          Maintainer: Firewall Builder contributors <noreply@github.com>
+          Description: Firewall Builder Qt 6 GUI and firewall compilers
+          EOF
+          dpkg-shlibdeps -O /tmp/fwb-stage/usr/bin/fwbuilder /tmp/fwb-stage/usr/bin/fwb_ipt 2>/dev/null | sed -n 's/^shlibs:Depends=//p' > /tmp/fwb-deps
+          if test -s /tmp/fwb-deps; then
+            printf 'Depends: %s\n' "$(cat /tmp/fwb-deps)" >> /tmp/fwb-stage/DEBIAN/control
+          fi
+          dpkg-deb --build /tmp/fwb-stage fwbuilder-6.0.0-ubuntu24.04-arm64.deb
+      - name: Verify DEB architecture and ELF dependencies
+        run: |
+          test "$(dpkg-deb -f fwbuilder-6.0.0-ubuntu24.04-arm64.deb Architecture)" = arm64
+          sudo apt-get install -y ./fwbuilder-6.0.0-ubuntu24.04-arm64.deb
+          file /usr/bin/fwbuilder
+          ldd /usr/bin/fwbuilder
+          ! ldd /usr/bin/fwbuilder | grep -q 'not found'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fwbuilder-ubuntu24.04-arm64
+          path: fwbuilder-6.0.0-ubuntu24.04-arm64.deb
+          if-no-files-found: error
