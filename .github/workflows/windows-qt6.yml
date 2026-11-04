@@ -24,7 +24,7 @@ jobs:
             cmake_arch: x64
           - arch: arm64
             triplet: arm64-windows
-            qt_arch: win64_msvc2022_arm64
+            qt_arch: win64_msvc2022_arm64_cross_compiled
             cmake_arch: ARM64
     runs-on: windows-2022
     permissions:
