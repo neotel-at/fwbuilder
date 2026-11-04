@@ -45,7 +45,14 @@ if [[ "$QT_VERSION" == 5 ]]; then
   QT_DEPLOY="$QT_PREFIX/bin/macdeployqt"
 else
   QT_PREFIX="$(brew --prefix qtbase)"
-  QT_DEPLOY="$(brew --prefix qttools)/bin/macdeployqt"
+  QT_DEPLOY=""
+  for candidate in \
+    "$QT_PREFIX/bin/macdeployqt" \
+    "$(brew --prefix qttools)/bin/macdeployqt" \
+    "$(brew --prefix qttools)/libexec/macdeployqt" \
+    "$BREW_PREFIX/bin/macdeployqt"; do
+    if [[ -x "$candidate" ]]; then QT_DEPLOY="$candidate"; break; fi
+  done
 fi
 XML_PREFIX="$(brew --prefix libxml2)"
 XSLT_PREFIX="$(brew --prefix libxslt)"
@@ -56,7 +63,7 @@ export PKG_CONFIG_PATH="$XML_PREFIX/lib/pkgconfig:$XSLT_PREFIX/lib/pkgconfig:$SN
 export CMAKE_PREFIX_PATH="$QT_PREFIX;$XML_PREFIX;$XSLT_PREFIX;$SNMP_PREFIX;$SSL_PREFIX"
 [[ -f "$QT_PREFIX/lib/cmake/Qt${QT_VERSION}/Qt${QT_VERSION}Config.cmake" ]] || fail "Qt${QT_VERSION}Config.cmake missing"
 if [[ "$MODE" == "--dmg" ]]; then
-  [[ -x "$QT_DEPLOY" ]] || fail "macdeployqt missing: $QT_DEPLOY"
+  [[ -n "$QT_DEPLOY" && -x "$QT_DEPLOY" ]] || fail "macdeployqt missing in Qt installation (qtbase/qttools); check: brew list qtbase | grep macdeployqt"
 fi
 
 info "Configuring with Qt $QT_VERSION"
