@@ -148,7 +148,7 @@ const treeExpanded=new Set();
 const topLevelOrder=['clusters','firewalls','objects','services'];
 function orderedChildren(node){
  // Rule sets are leaf nodes in the object browser; their rules belong to the right-hand table.
- if(node.type==='Policy'||node.type==='NAT')return [];
+ if(['Policy','NAT','Routing'].includes(node.type))return [];
  const children=[...(node.children||[])];
  if(node.type==='Library'){
   const rank=n=>{const i=topLevelOrder.indexOf((n.name||'').trim().toLowerCase());return i<0?topLevelOrder.length:i};
@@ -160,7 +160,7 @@ function renderNode(n,parent,depth,query){
  const children=orderedChildren(n);
  const matches=((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(query);
  if(query&&!matches&&!children.some(c=>hasMatch(c,query)))return;
- const wrap=el('div');wrap.className='entry';
+ const wrap=el('div');wrap.className='entry';wrap.dataset.objectId=n.id||'';
  const btn=el('button');const twist=el('span',' ');twist.className='tree-twist';
  btn.append(twist,iconElement(n.type),el('span',n.name||n.type));
  wrap.append(btn);parent.append(wrap);
@@ -183,13 +183,13 @@ function renderNode(n,parent,depth,query){
   else{treeExpanded.delete(key);if(depth===0)treeExpanded.add('closed:'+key)}
   setExpanded(open);
  };
- if(['Policy','NAT','Routing'].includes(n.type)){btn.ondblclick=ev=>{ev.preventDefault();show(n,btn)}}
+ btn.ondblclick=ev=>{ev.preventDefault();ev.stopPropagation();selectObject(n,btn);if(['Policy','NAT','Routing'].includes(n.type))show(n,btn);else renderProperties(n)};
 }
 function hasMatch(n,q){return ((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(q)||orderedChildren(n).some(c=>hasMatch(c,q))}
 function draw(){tree.replaceChildren();if(!root)return;const lib=findNode(root,activeLibrary);renderNode(lib||root,tree,0,document.getElementById('search').value.toLowerCase())}
 function updateLibraries(){const select=document.getElementById('library-select');const libs=[];function collect(n){if(n.type==='Library')libs.push(n);for(const c of n.children||[])collect(c)}if(root)collect(root);const previous=activeLibrary;select.replaceChildren();for(const lib of libs){const opt=el('option',lib.name||lib.id);opt.value=lib.id;select.append(opt)}if(!libs.some(x=>x.id===previous))activeLibrary=libs[0]?.id||'';select.value=activeLibrary;select.disabled=!libs.length}
 document.getElementById('library-select').addEventListener('change',e=>{activeLibrary=e.target.value;draw()});
-function selectObject(n,button){selectedObject=n;renderProperties(n);document.querySelectorAll('#tree .sel').forEach(x=>x.classList.remove('sel'));if(button)button.classList.add('sel')}
+function selectObject(n,button){selectedObject=n;document.querySelectorAll('#tree .sel').forEach(x=>x.classList.remove('sel'));if(button)button.classList.add('sel')}
 async function show(n,button){selectObject(n,button);if(!['Policy','NAT','Routing'].includes(n.type))return;detail.replaceChildren();
 if(['Policy','NAT','Routing'].includes(n.type)){try{
 const rules=await api('/api/rules?id='+encodeURIComponent(n.id));
@@ -200,7 +200,7 @@ for(const name of ['#','Source','Destination','Service','Interface','Direction',
 head.append(hr);t.append(head);const body=el('tbody');
 function objects(rule,keys){const out=[];for(const key of keys)out.push(...(rule.details?.[key]||[]));return out}
 function objectCell(row,items){const cell=el('td');cell.className='object-cell';if(!items.length){cell.append(el('span','Any'));row.append(cell);return}
-for(const obj of items){const line=el('div');line.className='object-line';const symbol=iconElement(obj.type);symbol.title=obj.type;line.append(symbol,el('span',obj.name));if(obj.id&&root){line.title=obj.type+' · '+obj.name;line.onclick=ev=>{ev.stopPropagation();const target=findNode(root,obj.id);if(target){selectedObject=target;renderProperties(target)}}}cell.append(line)}row.append(cell)}
+for(const obj of items){const line=el('div');line.className='object-line';const symbol=iconElement(obj.type);symbol.title=obj.type;line.append(symbol,el('span',obj.name));if(obj.id&&root){line.title=obj.type+' · '+obj.name;line.ondblclick=ev=>{ev.preventDefault();ev.stopPropagation();navigateToTreeObject(obj.id)}}cell.append(line)}row.append(cell)}
 rules.forEach((r,i)=>{const row=el('tr');row.className='policy-row';if(r.disabled==='True')row.classList.add('rule-disabled');
 row.onclick=()=>{body.querySelectorAll('.rule-selected').forEach(x=>x.classList.remove('rule-selected'));row.classList.add('rule-selected')};
 const num=el('td',String(i));num.className='rule-number';row.append(num);
@@ -222,6 +222,8 @@ t.append(body);viewport.append(t);detail.append(viewport);
 async function applyEdit(payload){try{const result=await api('/api/policy/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,revision})});revision=result.revision;await refresh();return true}catch(e){alert('Edit failed: '+e.message);return false}}
 async function moveRule(set,r,offset){if(await applyEdit({set_id:set.id,rule_id:r.id,move:offset}))await show(findNode(root,set.id))}
 function objectIcon(type){if(/Service/.test(type))return "⚙";if(/Network|AddressRange/.test(type))return "▣";if(/Firewall|Cluster/.test(type))return "▤";if(/Interface/.test(type))return "▥";if(/Host|IPv4|IPv6|DNSName/.test(type))return "▣";if(/Group/.test(type))return "▦";return "◆"}
+function findPath(n,id,path=[]){if(!n)return null;const next=[...path,n];if(n.id===id)return next;for(const c of n.children||[]){const found=findPath(c,id,next);if(found)return found}return null}
+function navigateToTreeObject(id){const path=findPath(root,id);if(!path)return;const lib=path.find(n=>n.type==='Library');if(lib&&lib.id!==activeLibrary){activeLibrary=lib.id;document.getElementById('library-select').value=lib.id}const search=document.getElementById('search');search.value='';for(const n of path){const key=activeLibrary+':'+(n.id||n.type+':'+n.name);treeExpanded.add(key);treeExpanded.delete('closed:'+key)}draw();const buttons=document.querySelectorAll('#tree .entry');for(const entry of buttons){if(entry.dataset.objectId===id){const btn=entry.querySelector(':scope > button');if(btn){selectObject(path[path.length-1],btn);btn.scrollIntoView({block:'center',inline:'nearest'});btn.focus({preventScroll:true})}break}}}
 function findNode(n,id){if(n.id===id)return n;for(const c of n.children||[]){const x=findNode(c,id);if(x)return x}return null}
 async function editRule(set,r){detail.replaceChildren();detail.append(el('h2','Edit policy rule'));const form=el('form');const fields={};
 function field(label,value,choices){const wrap=el('p');wrap.append(el('label',label+' '));let control;if(choices){control=el('select');for(const choice of choices){const o=el('option',choice);o.value=choice;control.append(o)}control.value=value}else{control=el('input');control.value=value||'';control.style.width='70%'}wrap.append(control);form.append(wrap);return control}
@@ -253,6 +255,6 @@ handle.addEventListener('keydown',e=>{const delta=e.shiftKey?40:10;if(axis==='x'
 setupSplitter(vertical,'x');setupSplitter(horizontal,'y');window.addEventListener('resize',applyLayout);applyLayout();
 document.getElementById('search').addEventListener('input',draw);
 document.getElementById('load').onclick=async()=>{const file=document.getElementById('upload').files[0];if(!file)return;const form=new FormData();form.append('file',file);try{status.textContent='Importing…';const x=await api('/api/import',{method:'POST',body:form});status.textContent=x.filename+' · '+x.count+' nodes';await refresh()}catch(e){status.textContent=e.message}};
-async function refresh(){try{const d=await api('/api/document');if(d.loaded){root=d.root;revision=d.revision;updateLibraries();if(selectedObject){selectedObject=findNode(root,selectedObject.id)||null;renderProperties(selectedObject)}status.textContent=d.filename+' · '+d.count+' nodes';draw()}else{status.textContent='No document loaded'}}catch(e){status.textContent=e.message}}
+async function refresh(){try{const d=await api('/api/document');if(d.loaded){root=d.root;revision=d.revision;selectedObject=null;renderProperties(null);updateLibraries();if(selectedObject){selectedObject=findNode(root,selectedObject.id)||null;renderProperties(selectedObject)}status.textContent=d.filename+' · '+d.count+' nodes';draw()}else{status.textContent='No document loaded'}}catch(e){status.textContent=e.message}}
 refresh();
 </script></body></html>`
