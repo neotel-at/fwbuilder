@@ -46,6 +46,7 @@
 #  include <stdio.h>
 #  include <sys/stat.h>
 #  include <fcntl.h>
+#  include <io.h>
 #  include <time.h>
 #  include <sys/timeb.h>
 #else
@@ -735,7 +736,11 @@ bool RCS::co(const QString &rev,bool force)
                     QMessageBox::critical(app->activeWindow(), "Firewall Builder", err);
                     throw(FWException(err.toLatin1().constData()));
                 }
+#ifdef _WIN32
+                _close(fd);
+#else
                 close(fd);
+#endif
 
                 filename    = tname;
                 temp        = true;
