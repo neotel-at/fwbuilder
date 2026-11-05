@@ -148,7 +148,10 @@ const treeExpanded=new Set();
 const topLevelOrder=['clusters','firewalls','objects','services'];
 function orderedChildren(node){
  // Rule sets are leaf nodes in the object browser; their rules belong to the right-hand table.
- if(['Policy','NAT','Routing','ObjectGroup'].includes(node.type))return [];
+ if(['Policy','NAT','Routing'].includes(node.type))return [];
+ // System folders (Clusters, Firewalls, Objects) can also be ObjectGroup nodes.
+ // Only actual reference-based object groups are leaves in the browser.
+ if(node.type==='ObjectGroup' && (node.children||[]).some(c=>c.type==='ObjectRef'))return [];
  const children=[...(node.children||[])];
  if(node.type==='Library'){
   const rank=n=>{const i=topLevelOrder.indexOf((n.name||'').trim().toLowerCase());return i<0?topLevelOrder.length:i};
