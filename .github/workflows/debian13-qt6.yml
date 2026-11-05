@@ -11,13 +11,6 @@ on:
       - 'cmake/**'
       - 'src/**'
       - 'packaging/**'
-  pull_request:
-    paths:
-      - '.github/workflows/debian13-qt6.yml'
-      - 'CMakeLists.txt'
-      - 'cmake/**'
-      - 'src/**'
-      - 'packaging/**'
 
 jobs:
   debian13:
