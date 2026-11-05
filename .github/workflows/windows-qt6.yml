@@ -57,8 +57,23 @@ jobs:
           & $deploy --release --no-translations (Join-Path $release 'fwbuilder.exe')
           if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
           Compress-Archive -Path "$release/*" -DestinationPath "fwbuilder-6.0-win-${{ matrix.arch }}.zip"
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (!(Test-Path $makensis)) { throw "makensis.exe not found: $makensis" }
+          $release = (Resolve-Path build-win/release).Path
+          & $makensis "/DARCH=${{ matrix.arch }}" "/DSTAGE=$release" "packaging/windows-qt6.nsi"
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS packaging failed' }
+          $setup = Get-ChildItem -Path . -Recurse -File -Filter "fwbuilder-6.0-win-${{ matrix.arch }}-setup.exe" | Select-Object -First 1
+          if (!$setup) { throw 'NSIS installer missing' }
+          Copy-Item $setup.FullName -Destination (Join-Path (Get-Location) $setup.Name) -Force
       - uses: actions/upload-artifact@v4
         with:
           name: fwbuilder-6.0-win-${{ matrix.arch }}
-          path: fwbuilder-6.0-win-${{ matrix.arch }}.zip
+          path: |
+            fwbuilder-6.0-win-${{ matrix.arch }}.zip
+            fwbuilder-6.0-win-${{ matrix.arch }}-setup.exe
           if-no-files-found: error
