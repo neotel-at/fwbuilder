@@ -46,16 +46,36 @@ jobs:
           cmake --install build-win --config Release
           $release = Join-Path (Resolve-Path build-win) 'release'
           if (!(Test-Path (Join-Path $release 'fwbuilder.exe'))) { throw 'fwbuilder.exe missing from install' }
-          # Use x64 host tools for ARM64 cross-builds and native Qt tools for x64.
-          $qtToolsRoot = if ($env:QT_HOST_PATH) { $env:QT_HOST_PATH } else { $env:QT_ROOT_DIR }
-          if (!$qtToolsRoot) { throw 'Neither QT_HOST_PATH nor QT_ROOT_DIR is set' }
-          $deploy = Join-Path $qtToolsRoot 'bin\windeployqt.exe'
-          if (!(Test-Path $deploy)) {
-            throw "windeployqt.exe not found: $deploy"
+          if ('${{ matrix.arch }}' -eq 'arm64') {
+            # The x64 host windeployqt copies x64 Qt DLLs/plugins and makes an
+            # ARM64 executable fail with STATUS_INVALID_IMAGE_FORMAT (0xc000007b).
+            # Copy runtime libraries/plugins from the ARM64 target Qt instead.
+            $qtBin = Join-Path $env:QT_ROOT_DIR 'bin'
+            $qtPlugins = Join-Path $env:QT_ROOT_DIR 'plugins'
+            $qtModules = @('Core', 'Gui', 'Network', 'PrintSupport', 'Svg', 'Widgets')
+            foreach ($module in $qtModules) {
+              $source = Join-Path $qtBin "Qt6$module.dll"
+              if (!(Test-Path $source)) { throw "ARM64 Qt runtime missing: $source" }
+              Copy-Item -LiteralPath $source -Destination $release -Force
+              Write-Host "Bundled ARM64 Qt runtime: Qt6$module.dll"
+            }
+            foreach ($pluginDir in @('generic', 'iconengines', 'imageformats', 'networkinformation', 'platforms', 'styles', 'tls')) {
+              $source = Join-Path $qtPlugins $pluginDir
+              if (Test-Path $source) {
+                Copy-Item -LiteralPath $source -Destination $release -Recurse -Force
+                Write-Host "Bundled ARM64 Qt plugins: $pluginDir"
+              }
+            }
+            if (!(Test-Path (Join-Path $release 'platforms\qwindows.dll'))) {
+              throw 'ARM64 Qt platform plugin qwindows.dll missing'
+            }
+          } else {
+            $deploy = Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe'
+            if (!(Test-Path $deploy)) { throw "windeployqt.exe not found: $deploy" }
+            Write-Host "Using windeployqt: $deploy"
+            & $deploy --release --no-translations (Join-Path $release 'fwbuilder.exe')
+            if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
           }
-          Write-Host "Using windeployqt: $deploy"
-          & $deploy --release --no-translations (Join-Path $release 'fwbuilder.exe')
-          if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
           # windeployqt handles Qt dependencies, not the vcpkg DLLs linked by
           # libxml2/libxslt/OpenSSL/zlib/liblzma. Bundle the runtime bin folder
           # before producing both the portable ZIP and NSIS installer.
