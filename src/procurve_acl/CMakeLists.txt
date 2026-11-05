@@ -11,7 +11,7 @@ ELSE()
 ENDIF()
 
 IF (WIN32)
-  target_link_libraries(fwb_procurve_acl lzma iconv ws2_32)
+  target_link_libraries(fwb_procurve_acl LibLZMA::LibLZMA Iconv::Iconv ws2_32)
 ENDIF()
 
 IF (UNIX)
