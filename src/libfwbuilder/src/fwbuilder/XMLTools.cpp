@@ -197,24 +197,25 @@ xmlParserInputPtr fwbExternalEntityLoader(const char *URL,
     cerr << "ENTITY: " << URL << " " << string((ID)?ID:"(null)") << endl;
 #endif
 
-    string fname;
+    if (!URL) {
+        return XMLTools::defaultLoader
+            ? XMLTools::defaultLoader(URL, ID, ctxt) : nullptr;
+    }
 
-    fname=string(current_template_dir) + "/";
+    // Only redirect the bundled DTD into the resource directory.  The old
+    // loader also redirected stylesheet URLs by stripping their directory,
+    // which breaks libxml2/libxslt's resolution of absolute Windows paths.
+    string url(URL);
+    string::size_type pos = url.find_last_of("/\\");
+    string basename = (pos == string::npos) ? url : url.substr(pos + 1);
+    if (basename == "fwbuilder.dtd" && current_template_dir) {
+        string fname = string(current_template_dir) + "/" + basename;
+        ret = xmlNewInputFromFile(ctxt, fname.c_str());
+        if (ret) return ret;
+    }
 
-    string url=URL;
-    string::size_type pos=url.find_last_of("/\\");
-    fname+=(pos==string::npos)?url:url.substr(pos+1);
-
-#ifdef FW_XMLTOOLS_VERBOSE
-    cerr << "ENTITY FNAME: " << fname << endl;
-#endif    
-    ret = xmlNewInputFromFile(ctxt, fname.c_str());
-    if(ret)
-        return(ret);
-    else if(XMLTools::defaultLoader)
-        return XMLTools::defaultLoader(URL, ID, ctxt);
-    else
-        return nullptr;
+    return XMLTools::defaultLoader
+        ? XMLTools::defaultLoader(URL, ID, ctxt) : nullptr;
 }
 
 void XMLTools::initXMLTools()
