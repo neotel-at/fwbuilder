@@ -10,7 +10,8 @@ apt-get install -y --no-install-recommends \
 
 test "$(dpkg --print-architecture)" = arm64
 cmake -S . -B build-ubuntu26-arm64 -G Ninja \
-  -DUseQt6=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  -DUseQt6=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_CXX_FLAGS=-Wno-error=deprecated-declarations
 cmake --build build-ubuntu26-arm64 --parallel 2
 
 stage="$(mktemp -d)"
