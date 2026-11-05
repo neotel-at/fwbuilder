@@ -93,6 +93,14 @@ type Rule struct {
     Disabled string `json:"disabled,omitempty"`
     Comment string `json:"comment,omitempty"`
     Elements map[string][]string `json:"elements"`
+    Details map[string][]RuleObject `json:"details"`
+    Options bool `json:"options"`
+}
+
+type RuleObject struct {
+ ID string `json:"id"`
+ Name string `json:"name"`
+ Type string `json:"type"`
 }
 
 func (d *Document) Rules(ruleSetID string) ([]Rule,error) {
@@ -102,8 +110,9 @@ func (d *Document) Rules(ruleSetID string) ([]Rule,error) {
     result := make([]Rule,0)
     for _, child := range set.Children {
         if !strings.HasSuffix(child.Type,"Rule") { continue }
-        rule := Rule{ID:child.ID,Name:child.Name,Type:child.Type,Action:child.Attributes["action"],Direction:child.Attributes["direction"],Disabled:child.Attributes["disabled"],Comment:child.Attributes["comment"],Elements:make(map[string][]string)}
+        rule := Rule{ID:child.ID,Name:child.Name,Type:child.Type,Action:child.Attributes["action"],Direction:child.Attributes["direction"],Disabled:child.Attributes["disabled"],Comment:child.Attributes["comment"],Elements:make(map[string][]string),Details:make(map[string][]RuleObject)}
         for _, el := range child.Children {
+            if el.Type=="PolicyRuleOptions" || el.Type=="NATRuleOptions" {rule.Options=true}
             for _, ref := range el.Children {
                 if ref.Type!="ObjectRef" && ref.Type!="ServiceRef" && ref.Type!="IntervalRef" { continue }
                 target := d.Resolve(ref.Attributes["ref"])
@@ -113,6 +122,9 @@ func (d *Document) Rules(ruleSetID string) ([]Rule,error) {
                     if label=="" { label=target.Type }
                 }
                 rule.Elements[el.Type] = append(rule.Elements[el.Type],label)
+                kind:="Unknown"
+                if target!=nil {kind=target.Type}
+                rule.Details[el.Type]=append(rule.Details[el.Type],RuleObject{ID:ref.Attributes["ref"],Name:label,Type:kind})
             }
         }
         result=append(result,rule)
