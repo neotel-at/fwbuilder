@@ -76,7 +76,7 @@ jobs:
           test -s /tmp/fwb-deps
           grep -q 'libxml2' /tmp/fwb-deps
           grep -q 'libqt6core6t64' /tmp/fwb-deps
-          printf 'Depends: %s\\n' "$(cat /tmp/fwb-deps)" >> /tmp/fwb-stage/DEBIAN/control
+          printf 'Depends: %s\n' "$(cat /tmp/fwb-deps)" >> /tmp/fwb-stage/DEBIAN/control
           dpkg-deb --build /tmp/fwb-stage fwbuilder-6.0.0-ubuntu24.04-arm64.deb
       - name: Verify DEB architecture and ELF dependencies
         run: |
