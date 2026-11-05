@@ -11,7 +11,7 @@ ELSE()
 ENDIF()
 
 IF (WIN32)
-  target_link_libraries(fwb_junosacl iconv lzma ws2_32)
+  target_link_libraries(fwb_junosacl Iconv::Iconv LibLZMA::LibLZMA ws2_32)
 ENDIF()
 
 IF (UNIX)
