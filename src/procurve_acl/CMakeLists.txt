@@ -5,9 +5,9 @@ set(procurve_acl_srcs
 add_executable(fwb_procurve_acl ${procurve_acl_srcs})
 
 IF (UseQt6)
-    target_link_libraries(fwb_procurve_acl common fwbcisco compilerdriver fwcompiler fwbuilder xml2 pthread m xslt z Qt6::Core Qt6::Widgets)
+    target_link_libraries(fwb_procurve_acl common fwbcisco compilerdriver fwcompiler fwbuilder LibXml2::LibXml2 LibXslt::LibXslt ZLIB::ZLIB Qt6::Core Qt6::Widgets)
 ELSE()
-    target_link_libraries(fwb_procurve_acl common fwbcisco compilerdriver fwcompiler fwbuilder xml2 pthread m xslt z Qt5::Core Qt5::Widgets)
+    target_link_libraries(fwb_procurve_acl common fwbcisco compilerdriver fwcompiler fwbuilder LibXml2::LibXml2 LibXslt::LibXslt ZLIB::ZLIB Qt5::Core Qt5::Widgets)
 ENDIF()
 
 IF (WIN32)
