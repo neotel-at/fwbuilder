@@ -148,7 +148,7 @@ const treeExpanded=new Set();
 const topLevelOrder=['clusters','firewalls','objects','services'];
 function orderedChildren(node){
  // Rule sets are leaf nodes in the object browser; their rules belong to the right-hand table.
- if(['Policy','NAT','Routing','ObjectGroup','ServiceGroup','IntervalGroup'].includes(node.type))return [];
+ if(['Policy','NAT','Routing'].includes(node.type))return [];
  const children=[...(node.children||[])];
  if(node.type==='Library'){
   const rank=n=>{const i=topLevelOrder.indexOf((n.name||'').trim().toLowerCase());return i<0?topLevelOrder.length:i};
@@ -235,26 +235,7 @@ const objectTypes={Src:['IPv4','IPv6','Network','NetworkIPv6','Host','Firewall',
 const refs={};for(const [key,types] of Object.entries(objectTypes)){const wrap=el('p');wrap.append(el('label',key+' '));const select=el('select');select.multiple=true;select.size=6;select.style.minWidth='320px';const candidates=[];function collect(n){if(n.id&&types.includes(n.type))candidates.push(n);for(const c of n.children||[])collect(c)}collect(root);for(const obj of candidates){const o=el('option',(obj.name||obj.type)+' ['+obj.type+']');o.value=obj.id;const selected=(r.elements?.[key]||[]).includes(obj.name||obj.type);o.selected=selected;select.append(o)}wrap.append(select);form.append(wrap);refs[key]=select}
 const save=el('button','Apply changes');save.type='submit';form.append(save);const cancel=el('button','Cancel');cancel.type='button';cancel.onclick=()=>show(set);form.append(cancel);
 form.onsubmit=async ev=>{ev.preventDefault();const payload={set_id:set.id,rule_id:r.id,action:fields.action.value,direction:fields.direction.value,comment:fields.comment.value,disabled:fields.disabled.value,refs:{}};for(const [key,select] of Object.entries(refs))payload.refs[key]=Array.from(select.selectedOptions).map(o=>o.value);if(await applyEdit(payload))await show(findNode(root,set.id))};detail.append(form)}
-function renderProperties(n){
- const p=document.getElementById('properties-content');p.replaceChildren();if(!n)return;
- const title=el('h3',(n.name||n.type)+' · '+n.type);p.append(title);
- const table=el('table');for(const [key,value] of Object.entries(n.attributes||{})){const tr=el('tr');tr.append(el('th',key),el('td',value));table.append(tr)}p.append(table);
- if(n.text)p.append(el('pre',n.text));
- if(['ObjectGroup','ServiceGroup','IntervalGroup'].includes(n.type)){
-  const heading=el('h4','Group members');p.append(heading);
-  const memberTable=el('table');const header=el('tr');header.append(el('th','Name'),el('th','Type'),el('th','Properties'));memberTable.append(header);
-  const refs=(n.children||[]).filter(c=>['ObjectRef','ServiceRef','IntervalRef'].includes(c.type));
-  for(const ref of refs){
-   const id=ref.attributes?.ref||'';
-   const obj=findNode(root,id);
-   const row=el('tr');row.append(el('td',obj?.name||id),el('td',obj?.type||'Unknown'));
-   const attrs=obj?.attributes||{};row.append(el('td',[attrs.address,attrs.netmask,attrs.protocol,attrs.port].filter(Boolean).join(' / ')));
-   memberTable.append(row);
-  }
-  if(!refs.length)p.append(el('p','No members'));
-  else p.append(memberTable);
- }
-}
+function renderProperties(n){const p=document.getElementById('properties-content');p.replaceChildren();if(!n)return;const title=el('h3',(n.name||n.type)+' · '+n.type);p.append(title);const table=el('table');for(const [key,value] of Object.entries(n.attributes||{})){const tr=el('tr');tr.append(el('th',key),el('td',value));table.append(tr)}p.append(table);if(n.text)p.append(el('pre',n.text))}
 const layoutKey='fwbuilder-web-layout-v1',defaults={left:340,bottom:260,editor:true};
 function readLayout(){try{const x=JSON.parse(localStorage.getItem(layoutKey));return {...defaults,...x}}catch{return {...defaults}}}
 let layout=readLayout();const leftPane=document.getElementById('left-pane'),upper=document.getElementById('upper'),workspace=document.getElementById('workspace'),editorPane=document.getElementById('editor-pane'),vertical=document.getElementById('vertical-splitter'),horizontal=document.getElementById('horizontal-splitter');
