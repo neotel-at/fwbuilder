@@ -57,7 +57,7 @@ class XMLTools
     static const char * FromXmlCast(const xmlChar * c) { return reinterpret_cast<const char *>(c); }
     static xmlChar * ToXmlCast(char * c) { return reinterpret_cast<xmlChar *>(c); }
     static xmlChar * ToXmlCast(const char * c) { return ToXmlCast(const_cast<char *>(c)); }
-    static xmlChar * StrToXmlCast(const std::string s) { return ToXmlCast(s.c_str()); }
+    static xmlChar * StrToXmlCast(const std::string &s) { return ToXmlCast(s.c_str()); }
     template<class T>
     static void FreeXmlBuff(const T t) {
         xmlFree(reinterpret_cast<void *>(const_cast< typename std::remove_const<T>::type>(t) >(t)));
