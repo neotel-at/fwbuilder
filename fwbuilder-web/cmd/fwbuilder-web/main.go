@@ -2,6 +2,7 @@ package main
 
 import (
     "crypto/subtle"
+    "embed"
     "encoding/json"
     "flag"
     "html/template"
@@ -15,6 +16,9 @@ import (
 
     "github.com/neotel-at/fwbuilder/fwbuilder-web/internal/fwbxml"
 )
+
+//go:embed icons/*.png
+var iconFiles embed.FS
 
 type server struct {
     mu sync.RWMutex
@@ -37,6 +41,7 @@ func main() {
     }
     mux:=http.NewServeMux()
     mux.HandleFunc("/",s.index)
+    mux.Handle("/icons/",http.FileServer(http.FS(iconFiles)))
     mux.HandleFunc("/api/document",s.document)
     mux.HandleFunc("/api/import",s.importFile)
     mux.HandleFunc("/api/rules",s.rules)
@@ -124,26 +129,30 @@ const indexHTML = `<!doctype html>
 *{box-sizing:border-box}body{margin:0}header{display:flex;gap:16px;align-items:center;padding:14px 20px;background:#172235;border-bottom:1px solid #334155}
 h1{font-size:18px;margin:0}button,input{font:inherit}button{background:#2563eb;color:white;border:0;padding:8px 12px;border-radius:6px;cursor:pointer}
 input{background:#0f172a;color:#e5e7eb;border:1px solid #475569;border-radius:6px;padding:8px}main{display:flex;min-height:0;height:calc(100vh - 68px);overflow:hidden}#workspace{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}#upper{display:flex;min-width:0;min-height:0;flex:1}#left-pane{flex:none;width:340px;min-width:170px}#right-pane{flex:1;min-width:180px;overflow:auto}#editor-pane{flex:none;height:260px;min-height:90px;overflow:auto;border-top:1px solid #334155;padding:12px 20px;background:#172235}#editor-pane[hidden],#horizontal-splitter[hidden]{display:none}.splitter{flex:none;background:#334155;touch-action:none;user-select:none;position:relative;z-index:2}.splitter:hover,.splitter.dragging{background:#60a5fa}#vertical-splitter{width:6px;cursor:col-resize}#horizontal-splitter{height:6px;cursor:row-resize}.pane-title{display:flex;align-items:center;gap:10px;justify-content:space-between}.pane-title button{background:#334155;padding:3px 9px}.toolbar-button{background:#334155}body.resizing{cursor:col-resize;user-select:none}body.resizing-y{cursor:row-resize;user-select:none}
-aside{overflow:auto;border-right:1px solid #334155;padding:12px}article{padding:10px 12px;overflow:auto}#tree button{background:none;text-align:left;width:100%;color:#dbeafe;padding:4px;border-radius:4px}
+aside{overflow:auto;border-right:1px solid #334155;padding:12px}article{padding:10px 12px;overflow:auto}#tree button{background:none;text-align:left;width:100%;color:#dbeafe;padding:3px 4px;border-radius:4px;display:flex;align-items:center;gap:5px;white-space:nowrap}.fwb-icon{width:16px;height:16px;object-fit:contain;flex:none}.tree-twist{width:13px;flex:none;text-align:center}#library-select{width:100%;background:#0f172a;color:#e5e7eb;border:1px solid #475569;padding:6px;border-radius:4px}
 #tree button:hover,#tree button.sel{background:#334155}.entry{margin-left:14px;border-left:1px solid #334155;padding-left:7px}
 small,.muted{color:#94a3b8}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #334155;padding:10px;text-align:left;vertical-align:top}th{color:#93c5fd}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#172235;padding:12px;border-radius:6px}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 @media(max-width:700px){#left-pane{min-width:110px}#right-pane{min-width:120px}#editor-pane{min-height:75px}}
 .policy-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 8px}.policy-heading h3{margin:5px 0;font-size:16px}.policy-heading span{font-size:12px;color:#94a3b8}.policy-scroll{overflow:auto;max-width:100%;border:1px solid #334155}.policy-table{table-layout:auto;border-collapse:separate;border-spacing:0;width:100%;margin:0;font-size:12px}.policy-table th{position:sticky;top:0;z-index:1;background:#243248;color:#cbd5e1;white-space:nowrap;text-align:left;font-size:12px;padding:7px 9px;border-right:1px solid #475569;border-bottom:2px solid #64748b}.policy-table td{padding:5px 8px;border-right:1px solid #334155;border-bottom:1px solid #334155;vertical-align:top}.policy-table .rule-number{min-width:35px;text-align:right;color:#94a3b8}.policy-table .object-cell{min-width:125px}.object-line{display:flex;align-items:center;gap:5px;min-height:22px;white-space:nowrap;cursor:pointer}.object-line:hover{color:#93c5fd}.object-icon{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:4px;color:#38bdf8;background:#164e63;font-size:14px;flex:none}.policy-row:hover{background:#233149}.policy-row.rule-selected{background:#475569}.policy-row.rule-disabled{opacity:.55}.direction-label{color:#93c5fd;white-space:nowrap}.action-pill{white-space:nowrap;font-weight:600}.action-pill.accept{color:#4ade80}.action-pill.deny{color:#f87171}.action-pill.other{color:#fbbf24}.option-cell{text-align:center;color:#fbbf24}.comment-cell{min-width:160px;max-width:360px;overflow-wrap:anywhere}.rule-controls{white-space:nowrap}.rule-controls button{padding:3px 6px;margin-right:3px;font-size:11px;background:#334155}
 </style></head><body><header><h1>🛡 fwbuilder-web</h1><span class="muted">Go • Policy editor (in-memory)</span><input type="file" id="upload" accept=".fwb,.xml"><button id="load">Import .fwb</button><button class="toolbar-button" id="toggle-editor" type="button">Hide Editor</button><button class="toolbar-button" id="reset-layout" type="button">Reset Layout</button><span id="status"></span></header>
-<main id="workspace"><div id="upper"><aside id="left-pane"><div class="toolbar"><input id="search" placeholder="Search objects…" aria-label="Search objects" style="width:100%"></div><div id="tree"></div></aside><div id="vertical-splitter" class="splitter" role="separator" aria-label="Resize object tree" aria-orientation="vertical" tabindex="0" aria-valuemin="170" aria-valuenow="340"></div><article id="right-pane"><div id="detail"><h2>Firewall Builder</h2><p class="muted">Import an existing .fwb file to browse its objects and rule sets.</p></div></article></div><div id="horizontal-splitter" class="splitter" role="separator" aria-label="Resize properties editor" aria-orientation="horizontal" tabindex="0" aria-valuemin="90" aria-valuenow="260"></div><section id="editor-pane"><div class="pane-title"><strong>Object Properties</strong><button id="close-editor" type="button" aria-label="Close properties editor">×</button></div><div id="properties-content" class="muted">Select an object in the tree to inspect its properties.</div></section></main>
+<main id="workspace"><div id="upper"><aside id="left-pane"><div class="toolbar"><label for="library-select">Library:</label><select id="library-select" aria-label="Select library"></select><input id="search" placeholder="Search objects…" aria-label="Search objects" style="width:100%"></div><div id="tree"></div></aside><div id="vertical-splitter" class="splitter" role="separator" aria-label="Resize object tree" aria-orientation="vertical" tabindex="0" aria-valuemin="170" aria-valuenow="340"></div><article id="right-pane"><div id="detail"><h2>Firewall Builder</h2><p class="muted">Import an existing .fwb file to browse its objects and rule sets.</p></div></article></div><div id="horizontal-splitter" class="splitter" role="separator" aria-label="Resize properties editor" aria-orientation="horizontal" tabindex="0" aria-valuemin="90" aria-valuenow="260"></div><section id="editor-pane"><div class="pane-title"><strong>Object Properties</strong><button id="close-editor" type="button" aria-label="Close properties editor">×</button></div><div id="properties-content" class="muted">Select an object in the tree to inspect its properties.</div></section></main>
 <script>
 const tree=document.getElementById('tree'), detail=document.getElementById('detail'), status=document.getElementById('status');
-let root=null, revision=0, selectedObject=null, token=sessionStorage.getItem('fwb-token')||'';
+let root=null, activeLibrary='', revision=0, selectedObject=null, token=sessionStorage.getItem('fwb-token')||'';
 function headers(){return token?{'Authorization':'Bearer '+token}:{}}
 async function api(url,opt={}){let res=await fetch(url,{...opt,headers:{...headers(),...(opt.headers||{})}});if(res.status===401){token=prompt('API bearer token')||'';sessionStorage.setItem('fwb-token',token);return api(url,opt)}if(!res.ok)throw Error(await res.text());return res.json()}
 function el(t,txt){const n=document.createElement(t);if(txt!==undefined)n.textContent=txt;return n}
+function iconName(type){const names={Library:'library',ObjectGroup:'object-group',ServiceGroup:'service-group',IPv4:'address',IPv6:'address6',Network:'network',NetworkIPv6:'network6',AddressRange:'rangeaddress',AddressTable:'addresstable',DNSName:'domainname',Host:'host',Firewall:'firewall',Cluster:'cluster',Interface:'interface',Policy:'ruleset',NAT:'nat',Routing:'routing',TCPService:'service-tcp',UDPService:'service-udp',IPService:'service-ip',ICMPService:'service-icmp',ICMP6Service:'service-icmp6',CustomService:'service-custom',Interval:'clock',IntervalGroup:'clock-group',RuleSet:'ruleset'};return names[type]||(type.endsWith('Group')?'object-group':'folder')}
+function iconElement(type){const img=el('img');img.src='/icons/'+iconName(type)+'_16.png';img.alt='';img.className='fwb-icon';return img}
 function renderNode(n,parent,depth,query){const matches=((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(query);let children=n.children||[];let matching=children.some(c=>hasMatch(c,query));if(query&&!matches&&!matching)return;
-const wrap=el('div');wrap.className='entry';const btn=el('button',(children.length?'▸ ':'  ')+(n.name||n.type)+'  ['+n.type+']');btn.onclick=()=>show(n,btn);wrap.append(btn);parent.append(wrap);
-if(depth<2||query){const child=el('div');wrap.append(child);for(const c of children)renderNode(c,child,depth+1,query);btn.firstChild.textContent=btn.textContent.replace('▸','▾')}
-else if(children.length){let opened=false;btn.onclick=()=>{show(n,btn);let child=wrap.querySelector('.entry-list');if(opened){child.remove();opened=false;return}child=el('div');child.className='entry-list';wrap.append(child);for(const c of children)renderNode(c,child,depth+1,query);opened=true}}
+const wrap=el('div');wrap.className='entry';const btn=el('button');const twist=el('span',children.length?'▸':' ');twist.className='tree-twist';btn.append(twist,iconElement(n.type),el('span',n.name||n.type));btn.onclick=()=>show(n,btn);wrap.append(btn);parent.append(wrap);
+if(depth<2||query){const child=el('div');wrap.append(child);for(const c of children)renderNode(c,child,depth+1,query);twist.textContent=children.length?'▾':' '}
+else if(children.length){let opened=false;btn.onclick=()=>{show(n,btn);let child=wrap.querySelector('.entry-list');if(opened){child.remove();opened=false;return}child=el('div');child.className='entry-list';wrap.append(child);for(const c of children)renderNode(c,child,depth+1,query);opened=true;twist.textContent='▾'}else{twist.textContent='▸'}}
 }
 function hasMatch(n,q){return ((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(q)||(n.children||[]).some(c=>hasMatch(c,q))}
-function draw(){tree.replaceChildren();if(root)renderNode(root,tree,0,document.getElementById('search').value.toLowerCase())}
+function draw(){tree.replaceChildren();if(!root)return;const lib=(root.children||[]).find(x=>x.type==='Library'&&x.id===activeLibrary);if(lib)renderNode(lib,tree,0,document.getElementById('search').value.toLowerCase());else renderNode(root,tree,0,document.getElementById('search').value.toLowerCase())}
+function updateLibraries(){const select=document.getElementById('library-select');const libs=(root?.children||[]).filter(x=>x.type==='Library');const previous=activeLibrary;select.replaceChildren();for(const lib of libs){const opt=el('option',lib.name||lib.id);opt.value=lib.id;select.append(opt)}if(!libs.some(x=>x.id===previous))activeLibrary=libs[0]?.id||'';select.value=activeLibrary;select.disabled=!libs.length}
+document.getElementById('library-select').addEventListener('change',e=>{activeLibrary=e.target.value;draw()});
 async function show(n,button){selectedObject=n;renderProperties(n);document.querySelectorAll('.sel').forEach(x=>x.classList.remove('sel'));if(button)button.classList.add('sel');detail.replaceChildren();detail.append(el('h2',n.name||n.type),el('p',n.type+(n.id?' · '+n.id:'')));
 if(n.attributes){detail.append(el('p','Select the properties panel below to inspect object attributes.'))}
 if(n.text)detail.append(el('pre',n.text));
@@ -156,7 +165,7 @@ for(const name of ['#','Source','Destination','Service','Interface','Direction',
 head.append(hr);t.append(head);const body=el('tbody');
 function objects(rule,keys){const out=[];for(const key of keys)out.push(...(rule.details?.[key]||[]));return out}
 function objectCell(row,items){const cell=el('td');cell.className='object-cell';if(!items.length){cell.append(el('span','Any'));row.append(cell);return}
-for(const obj of items){const line=el('div');line.className='object-line';const symbol=el('span',objectIcon(obj.type));symbol.className='object-icon';symbol.title=obj.type;line.append(symbol,el('span',obj.name));if(obj.id&&root){line.title=obj.type+' · '+obj.name;line.onclick=ev=>{ev.stopPropagation();const target=findNode(root,obj.id);if(target){selectedObject=target;renderProperties(target)}}}cell.append(line)}row.append(cell)}
+for(const obj of items){const line=el('div');line.className='object-line';const symbol=iconElement(obj.type);symbol.title=obj.type;line.append(symbol,el('span',obj.name));if(obj.id&&root){line.title=obj.type+' · '+obj.name;line.onclick=ev=>{ev.stopPropagation();const target=findNode(root,obj.id);if(target){selectedObject=target;renderProperties(target)}}}cell.append(line)}row.append(cell)}
 rules.forEach((r,i)=>{const row=el('tr');row.className='policy-row';if(r.disabled==='True')row.classList.add('rule-disabled');
 row.onclick=()=>{body.querySelectorAll('.rule-selected').forEach(x=>x.classList.remove('rule-selected'));row.classList.add('rule-selected')};
 const num=el('td',String(i));num.className='rule-number';row.append(num);
@@ -209,6 +218,6 @@ handle.addEventListener('keydown',e=>{const delta=e.shiftKey?40:10;if(axis==='x'
 setupSplitter(vertical,'x');setupSplitter(horizontal,'y');window.addEventListener('resize',applyLayout);applyLayout();
 document.getElementById('search').addEventListener('input',draw);
 document.getElementById('load').onclick=async()=>{const file=document.getElementById('upload').files[0];if(!file)return;const form=new FormData();form.append('file',file);try{status.textContent='Importing…';const x=await api('/api/import',{method:'POST',body:form});status.textContent=x.filename+' · '+x.count+' nodes';await refresh()}catch(e){status.textContent=e.message}};
-async function refresh(){try{const d=await api('/api/document');if(d.loaded){root=d.root;revision=d.revision;if(selectedObject){selectedObject=findNode(root,selectedObject.id)||null;renderProperties(selectedObject)}status.textContent=d.filename+' · '+d.count+' nodes';draw()}else{status.textContent='No document loaded'}}catch(e){status.textContent=e.message}}
+async function refresh(){try{const d=await api('/api/document');if(d.loaded){root=d.root;revision=d.revision;updateLibraries();if(selectedObject){selectedObject=findNode(root,selectedObject.id)||null;renderProperties(selectedObject)}status.textContent=d.filename+' · '+d.count+' nodes';draw()}else{status.textContent='No document loaded'}}catch(e){status.textContent=e.message}}
 refresh();
 </script></body></html>`
