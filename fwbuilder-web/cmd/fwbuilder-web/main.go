@@ -176,21 +176,21 @@ function renderNode(n,parent,depth,query){
  }
  setExpanded(expanded);
  btn.onclick=()=>{
-  show(n,btn);
+  selectObject(n,btn);
   if(!children.length)return;
   const open=child.hidden;
   if(open){treeExpanded.add(key);treeExpanded.delete('closed:'+key)}
   else{treeExpanded.delete(key);if(depth===0)treeExpanded.add('closed:'+key)}
   setExpanded(open);
  };
+ if(['Policy','NAT','Routing'].includes(n.type)){btn.ondblclick=ev=>{ev.preventDefault();show(n,btn)}}
 }
 function hasMatch(n,q){return ((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(q)||orderedChildren(n).some(c=>hasMatch(c,q))}
 function draw(){tree.replaceChildren();if(!root)return;const lib=findNode(root,activeLibrary);renderNode(lib||root,tree,0,document.getElementById('search').value.toLowerCase())}
 function updateLibraries(){const select=document.getElementById('library-select');const libs=[];function collect(n){if(n.type==='Library')libs.push(n);for(const c of n.children||[])collect(c)}if(root)collect(root);const previous=activeLibrary;select.replaceChildren();for(const lib of libs){const opt=el('option',lib.name||lib.id);opt.value=lib.id;select.append(opt)}if(!libs.some(x=>x.id===previous))activeLibrary=libs[0]?.id||'';select.value=activeLibrary;select.disabled=!libs.length}
 document.getElementById('library-select').addEventListener('change',e=>{activeLibrary=e.target.value;draw()});
-async function show(n,button){selectedObject=n;renderProperties(n);document.querySelectorAll('.sel').forEach(x=>x.classList.remove('sel'));if(button)button.classList.add('sel');detail.replaceChildren();detail.append(el('h2',n.name||n.type),el('p',n.type+(n.id?' · '+n.id:'')));
-if(n.attributes){detail.append(el('p','Select the properties panel below to inspect object attributes.'))}
-if(n.text)detail.append(el('pre',n.text));
+function selectObject(n,button){selectedObject=n;renderProperties(n);document.querySelectorAll('#tree .sel').forEach(x=>x.classList.remove('sel'));if(button)button.classList.add('sel')}
+async function show(n,button){selectObject(n,button);if(!['Policy','NAT','Routing'].includes(n.type))return;detail.replaceChildren();
 if(['Policy','NAT','Routing'].includes(n.type)){try{
 const rules=await api('/api/rules?id='+encodeURIComponent(n.id));
 const heading=el('div');heading.className='policy-heading';heading.append(el('h3',(n.name||n.type)+' / '+n.type));heading.append(el('span',rules.length+' rules'));detail.append(heading);
