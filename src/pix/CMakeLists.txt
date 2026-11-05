@@ -10,7 +10,7 @@ ELSE()
 ENDIF()
 
 IF (WIN32)
-  target_link_libraries(fwb_pix lzma iconv ws2_32)
+  target_link_libraries(fwb_pix LibLZMA::LibLZMA Iconv::Iconv ws2_32)
 ENDIF()
 
 IF (UNIX)
