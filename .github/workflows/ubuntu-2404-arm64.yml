@@ -61,7 +61,17 @@ jobs:
           Description: Firewall Builder Qt 6 GUI and firewall compilers
           EOF
           mkdir -p debian
-          cp /tmp/fwb-stage/DEBIAN/control debian/control
+          cat > debian/control <<'EOF'
+          Source: fwbuilder
+          Section: net
+          Priority: optional
+          Maintainer: Firewall Builder contributors <noreply@github.com>
+          Standards-Version: 4.6.2
+
+          Package: fwbuilder
+          Architecture: any
+          Description: Firewall Builder Qt 6 GUI and firewall compilers
+          EOF
           dpkg-shlibdeps -O -e/tmp/fwb-stage/usr/bin/fwbuilder -e/tmp/fwb-stage/usr/bin/fwb_ipt | sed -n 's/^shlibs:Depends=//p' > /tmp/fwb-deps
           test -s /tmp/fwb-deps
           grep -q 'libxml2' /tmp/fwb-deps
