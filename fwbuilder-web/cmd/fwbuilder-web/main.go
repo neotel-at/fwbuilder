@@ -10,6 +10,8 @@ import (
     "log"
     "net/http"
     "os"
+    "net"
+    "fmt"
     "strings"
     "sync"
     "time"
@@ -46,6 +48,7 @@ func main() {
     mux.HandleFunc("/api/import",s.importFile)
     mux.HandleFunc("/api/rules",s.rules)
     mux.HandleFunc("/api/policy/edit",s.editPolicy)
+    mux.HandleFunc("/api/object/edit",s.editObject)
     srv:=&http.Server{Addr:*listen,Handler:s.headers(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:30*time.Second,WriteTimeout:30*time.Second,MaxHeaderBytes:1<<20}
     log.Printf("fwbuilder-web listening on %s",*listen)
     log.Fatal(srv.ListenAndServe())
@@ -122,6 +125,47 @@ func (s *server) editPolicy(w http.ResponseWriter,r *http.Request){
     jsonResponse(w,map[string]any{"revision":s.revision})
 }
 
+// editObject updates only the explicitly supported fields, preserving unknown XML data.
+func (s *server) editObject(w http.ResponseWriter,r *http.Request){
+ if r.Method!=http.MethodPost {http.Error(w,"method not allowed",405);return}
+ if origin:=r.Header.Get("Origin");origin!="" && !strings.EqualFold(origin,"http://"+r.Host) && !strings.EqualFold(origin,"https://"+r.Host) {http.Error(w,"cross-origin request rejected",403);return}
+ var req struct{ID string `json:"id"`;Revision uint64 `json:"revision"`;Fields map[string]string `json:"fields"`}
+ dec:=json.NewDecoder(http.MaxBytesReader(w,r.Body,32<<10));dec.DisallowUnknownFields()
+ if err:=dec.Decode(&req);err!=nil {http.Error(w,err.Error(),400);return}
+ s.mu.Lock();defer s.mu.Unlock()
+ if s.doc==nil {http.Error(w,"no file loaded",404);return}
+ if req.Revision!=s.revision {http.Error(w,"stale document revision",409);return}
+ n:=s.doc.Resolve(req.ID);if n==nil {http.Error(w,"object not found",404);return}
+ allowed:=map[string][]string{
+ "IPv4":{"name","comment","address"},"IPv6":{"name","comment","address"},
+ "Network":{"name","comment","address","netmask"},"NetworkIPv6":{"name","comment","address","netmask"},
+ "AddressRange":{"name","comment","start_address","end_address"},
+ "DNSName":{"name","comment","dnsname"},
+ "TCPService":{"name","comment","src_range_start","src_range_end","dst_range_start","dst_range_end"},
+ "UDPService":{"name","comment","src_range_start","src_range_end","dst_range_start","dst_range_end"},
+ "ObjectGroup":{"name","comment"},
+ }
+ fields,ok:=allowed[n.Type];if !ok {http.Error(w,"object type is not editable yet",400);return}
+ if len(req.Fields)==0 {http.Error(w,"no changes",400);return}
+ valid:=map[string]bool{};for _,key:=range fields {valid[key]=true}
+ for key,value:=range req.Fields {
+  if !valid[key] {http.Error(w,"unsupported field: "+key,400);return}
+  if len(value)>4096 {http.Error(w,"field too long",400);return}
+  switch key {
+  case "name":if strings.TrimSpace(value)=="" {http.Error(w,"name must not be empty",400);return}
+  case "address","start_address","end_address":
+   ip:=net.ParseIP(value);if ip==nil || (strings.Contains(n.Type,"IPv6") && ip.To4()!=nil) || (!strings.Contains(n.Type,"IPv6") && n.Type!="AddressRange" && ip.To4()==nil) {http.Error(w,"invalid IP address",400);return}
+  case "netmask":
+   if net.ParseIP(value)==nil {http.Error(w,"invalid netmask",400);return}
+  case "src_range_start","src_range_end","dst_range_start","dst_range_end":
+   var port int; if _,err:=fmt.Sscanf(value,"%d",&port);err!=nil || port<0 || port>65535 {http.Error(w,"invalid port",400);return}
+  }
+ }
+ if n.Attributes==nil {n.Attributes=map[string]string{}}
+ for key,value:=range req.Fields {n.Attributes[key]=value;if key=="name" {n.Name=value}}
+ s.revision++;jsonResponse(w,map[string]any{"revision":s.revision})
+}
+
 const indexHTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>fwbuilder-web</title>
 <style>
@@ -134,7 +178,7 @@ aside{overflow:auto;border-right:1px solid #334155;padding:12px}article{padding:
 small,.muted{color:#94a3b8}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #334155;padding:10px;text-align:left;vertical-align:top}th{color:#93c5fd}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#172235;padding:12px;border-radius:6px}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 @media(max-width:700px){#left-pane{min-width:110px}#right-pane{min-width:120px}#editor-pane{min-height:75px}}
 .policy-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 8px}.policy-heading h3{margin:5px 0;font-size:16px}.policy-heading span{font-size:12px;color:#94a3b8}.policy-scroll{overflow:auto;max-width:100%;border:1px solid #334155}.policy-table{table-layout:auto;border-collapse:separate;border-spacing:0;width:100%;margin:0;font-size:12px}.policy-table th{position:sticky;top:0;z-index:1;background:#243248;color:#cbd5e1;white-space:nowrap;text-align:left;font-size:12px;padding:7px 9px;border-right:1px solid #475569;border-bottom:2px solid #64748b}.policy-table td{padding:5px 8px;border-right:1px solid #334155;border-bottom:1px solid #334155;vertical-align:top}.policy-table .rule-number{min-width:35px;text-align:right;color:#94a3b8}.policy-table .object-cell{min-width:125px}.object-line{display:flex;align-items:center;gap:5px;min-height:22px;white-space:nowrap;cursor:pointer}.object-line:hover{color:#93c5fd}.object-icon{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:4px;color:#38bdf8;background:#164e63;font-size:14px;flex:none}.policy-row:hover{background:#233149}.policy-row.rule-selected{background:#475569}.policy-row.rule-disabled{opacity:.55}.direction-label{color:#93c5fd;white-space:nowrap}.action-pill{white-space:nowrap;font-weight:600}.action-pill.accept{color:#4ade80}.action-pill.deny{color:#f87171}.action-pill.other{color:#fbbf24}.option-cell{text-align:center;color:#fbbf24}.comment-cell{min-width:160px;max-width:360px;overflow-wrap:anywhere}.rule-controls{white-space:nowrap}.rule-controls button{padding:3px 6px;margin-right:3px;font-size:11px;background:#334155}
-.group-members td:first-child{white-space:nowrap}.group-members td:first-child img{vertical-align:middle;margin-right:7px}.group-members td:first-child span{vertical-align:middle}</style></head><body><header><h1>🛡 fwbuilder-web</h1><span class="muted">Go • Policy editor (in-memory)</span><input type="file" id="upload" accept=".fwb,.xml"><button id="load">Import .fwb</button><button class="toolbar-button" id="toggle-editor" type="button">Hide Editor</button><button class="toolbar-button" id="reset-layout" type="button">Reset Layout</button><span id="status"></span></header>
+.group-members td:first-child{white-space:nowrap}.group-members td:first-child img{vertical-align:middle;margin-right:7px}.group-members td:first-child span{vertical-align:middle}.object-form{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:12px 0}.object-form label{display:flex;flex-direction:column;gap:5px;min-width:160px}.object-form input,.object-form textarea{min-width:160px;max-width:350px}.object-form textarea{background:#0f172a;color:#e5e7eb;border:1px solid #475569;border-radius:6px;padding:8px}</style></head><body><header><h1>🛡 fwbuilder-web</h1><span class="muted">Go • Policy editor (in-memory)</span><input type="file" id="upload" accept=".fwb,.xml"><button id="load">Import .fwb</button><button class="toolbar-button" id="toggle-editor" type="button">Hide Editor</button><button class="toolbar-button" id="reset-layout" type="button">Reset Layout</button><span id="status"></span></header>
 <main id="workspace"><div id="upper"><aside id="left-pane"><div class="toolbar"><label for="library-select">Library:</label><select id="library-select" aria-label="Select library"></select><input id="search" placeholder="Search objects…" aria-label="Search objects" style="width:100%"></div><div id="tree"></div></aside><div id="vertical-splitter" class="splitter" role="separator" aria-label="Resize object tree" aria-orientation="vertical" tabindex="0" aria-valuemin="170" aria-valuenow="340"></div><article id="right-pane"><div id="detail"><h2>Firewall Builder</h2><p class="muted">Import an existing .fwb file to browse its objects and rule sets.</p></div></article></div><div id="horizontal-splitter" class="splitter" role="separator" aria-label="Resize properties editor" aria-orientation="horizontal" tabindex="0" aria-valuemin="90" aria-valuenow="260"></div><section id="editor-pane"><div class="pane-title"><strong>Object Properties</strong><button id="close-editor" type="button" aria-label="Close properties editor">×</button></div><div id="properties-content" class="muted">Select an object in the tree to inspect its properties.</div></section></main>
 <script>
 const tree=document.getElementById('tree'), detail=document.getElementById('detail'), status=document.getElementById('status');
@@ -240,24 +284,36 @@ const save=el('button','Apply changes');save.type='submit';form.append(save);con
 form.onsubmit=async ev=>{ev.preventDefault();const payload={set_id:set.id,rule_id:r.id,action:fields.action.value,direction:fields.direction.value,comment:fields.comment.value,disabled:fields.disabled.value,refs:{}};for(const [key,select] of Object.entries(refs))payload.refs[key]=Array.from(select.selectedOptions).map(o=>o.value);if(await applyEdit(payload))await show(findNode(root,set.id))};detail.append(form)}
 function renderProperties(n){
  const p=document.getElementById('properties-content');p.replaceChildren();if(!n)return;
- const title=el('h3',(n.name||n.type)+' · '+n.type);p.append(title);
- const table=el('table');for(const [key,value] of Object.entries(n.attributes||{})){const tr=el('tr');tr.append(el('th',key),el('td',value));table.append(tr)}p.append(table);
- if(n.text)p.append(el('pre',n.text));
- if(n.type!=='ObjectGroup')return;
- p.append(el('h4','Group members'));
- const memberTable=el('table');memberTable.className='group-members';
- const header=el('tr');header.append(el('th','Name'),el('th','Properties'));memberTable.append(header);
- const refs=(n.children||[]).filter(c=>c.type==='ObjectRef');
- for(const ref of refs){
-  const id=ref.attributes?.ref||'';
-  const obj=findNode(root,id);
-  const row=el('tr');const name=el('td');name.append(iconElement(obj?.type||'ObjectGroup'),el('span',obj?.name||id));
-  const a=obj?.attributes||{};
-  const props=[a.address,a.netmask,a.start_address,a.end_address].filter(Boolean).join(' / ')||obj?.type||'Unresolved reference';
-  row.append(name,el('td',props));memberTable.append(row);
+ p.append(el('h3',(n.name||n.type)+' · '+n.type));
+ const schemas={
+ IPv4:[['name','Name'],['address','Address'],['comment','Comment']],
+ IPv6:[['name','Name'],['address','Address'],['comment','Comment']],
+ Network:[['name','Name'],['address','Address'],['netmask','Netmask'],['comment','Comment']],
+ NetworkIPv6:[['name','Name'],['address','Address'],['netmask','Netmask'],['comment','Comment']],
+ AddressRange:[['name','Name'],['start_address','Start address'],['end_address','End address'],['comment','Comment']],
+ DNSName:[['name','Name'],['dnsname','DNS name'],['comment','Comment']],
+ TCPService:[['name','Name'],['src_range_start','Source port from'],['src_range_end','Source port to'],['dst_range_start','Destination port from'],['dst_range_end','Destination port to'],['comment','Comment']],
+ UDPService:[['name','Name'],['src_range_start','Source port from'],['src_range_end','Source port to'],['dst_range_start','Destination port from'],['dst_range_end','Destination port to'],['comment','Comment']],
+ ObjectGroup:[['name','Name'],['comment','Comment']]
+ };
+ const schema=schemas[n.type];
+ if(schema){
+  const form=el('form');form.className='object-form';const controls={};
+  for(const [key,label] of schema){const line=el('label');line.textContent=label;const control=key==='comment'?el('textarea'):el('input');control.value=n.attributes?.[key]|| (key==='name'?n.name||'':'');control.name=key;line.append(control);form.append(line);controls[key]=control}
+  const save=el('button','Apply changes');save.type='submit';form.append(save);
+  const message=el('span');message.className='muted';form.append(message);
+  form.onsubmit=async ev=>{ev.preventDefault();const fields={};for(const [key,input] of Object.entries(controls))if(input.value!==(n.attributes?.[key]||''))fields[key]=input.value;
+   if(!Object.keys(fields).length){message.textContent='No changes';return}
+   try{const result=await api('/api/object/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:n.id,revision,fields})});revision=result.revision;Object.assign(n.attributes,fields);if(fields.name!==undefined)n.name=fields.name;message.textContent='Changes applied (in memory)';draw()}
+   catch(e){message.textContent='Error: '+e.message}
+  };p.append(form);
+ }else{
+  const table=el('table');for(const [key,value] of Object.entries(n.attributes||{})){const tr=el('tr');tr.append(el('th',key),el('td',value));table.append(tr)}p.append(table);
  }
- p.append(memberTable);
- if(!refs.length)p.append(el('p','No group members'));
+ if(n.type==='ObjectGroup'){
+  p.append(el('h4','Group members'));const members=el('table');const header=el('tr');header.append(el('th','Name'),el('th','Properties'));members.append(header);
+  for(const ref of (n.children||[]).filter(c=>c.type==='ObjectRef')){const obj=findNode(root,ref.attributes?.ref);const row=el('tr');const name=el('td');name.append(iconElement(obj?.type||'ObjectGroup'),el('span',obj?.name||ref.attributes?.ref||''));const a=obj?.attributes||{};row.append(name,el('td',[a.address,a.netmask,a.start_address,a.end_address].filter(Boolean).join(' / ')||obj?.type||''));members.append(row)}p.append(members)
+ }
 }
 const layoutKey='fwbuilder-web-layout-v1',defaults={left:340,bottom:260,editor:true};
 function readLayout(){try{const x=JSON.parse(localStorage.getItem(layoutKey));return {...defaults,...x}}catch{return {...defaults}}}
