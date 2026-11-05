@@ -988,16 +988,18 @@ int OSConfigurator_secuwall::generateSSHKeys()
     if (host_key_file.exists())
     {
         /* Check if key entry is present */
-        host_key_file.open(QIODevice::ReadOnly);
-        QTextStream known_hosts(&host_key_file);
-        QString tmp;
-        while(!known_hosts.atEnd())
+        if (host_key_file.open(QIODevice::ReadOnly))
         {
-            known_hosts >> tmp;
-            if (containsFirewallKey(tmp.toStdString()))
-                keyPresent = true;
+            QTextStream known_hosts(&host_key_file);
+            QString tmp;
+            while (!known_hosts.atEnd())
+            {
+                known_hosts >> tmp;
+                if (containsFirewallKey(tmp.toStdString()))
+                    keyPresent = true;
+            }
+            host_key_file.close();
         }
-        host_key_file.close();
     }
 
     if (!keyPresent)
