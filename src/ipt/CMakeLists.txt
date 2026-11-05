@@ -10,7 +10,7 @@ ELSE()
 ENDIF()
 
 IF (WIN32)
-  target_link_libraries(fwb_ipt lzma iconv)
+  target_link_libraries(fwb_ipt LibLZMA::LibLZMA Iconv::Iconv)
 ENDIF()
 
 IF (UNIX)
