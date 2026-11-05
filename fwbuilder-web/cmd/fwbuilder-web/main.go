@@ -1,0 +1,339 @@
+package main
+
+import (
+    "crypto/subtle"
+    "embed"
+    "encoding/json"
+    "flag"
+    "html/template"
+    "io"
+    "log"
+    "net/http"
+    "os"
+    "net"
+    "fmt"
+    "strings"
+    "sync"
+    "time"
+
+    "github.com/neotel-at/fwbuilder/fwbuilder-web/internal/fwbxml"
+)
+
+//go:embed icons/*.png
+var iconFiles embed.FS
+
+type server struct {
+    mu sync.RWMutex
+    doc *fwbxml.Document
+    filename string
+    revision uint64
+    token string
+    page *template.Template
+}
+
+func main() {
+    listen:=flag.String("listen","127.0.0.1:8080","HTTP listen address")
+    file:=flag.String("file","","optional .fwb file to preload")
+    flag.Parse()
+    s:=&server{token:os.Getenv("FWBUILDER_WEB_TOKEN"),page:template.Must(template.New("app").Parse(indexHTML))}
+    if *file!="" {
+        f,err:=os.Open(*file);if err!=nil { log.Fatal(err) };defer f.Close()
+        doc,err:=fwbxml.Parse(f);if err!=nil { log.Fatal(err) }
+        s.doc=doc;s.filename=*file
+    }
+    mux:=http.NewServeMux()
+    mux.HandleFunc("/",s.index)
+    mux.Handle("/icons/",http.FileServer(http.FS(iconFiles)))
+    mux.HandleFunc("/api/document",s.document)
+    mux.HandleFunc("/api/import",s.importFile)
+    mux.HandleFunc("/api/rules",s.rules)
+    mux.HandleFunc("/api/policy/edit",s.editPolicy)
+    mux.HandleFunc("/api/object/edit",s.editObject)
+    srv:=&http.Server{Addr:*listen,Handler:s.headers(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:30*time.Second,WriteTimeout:30*time.Second,MaxHeaderBytes:1<<20}
+    log.Printf("fwbuilder-web listening on %s",*listen)
+    log.Fatal(srv.ListenAndServe())
+}
+
+func (s *server) authorized(r *http.Request) bool {
+    if s.token=="" { return true }
+    auth:=strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ")
+    return subtle.ConstantTimeCompare([]byte(auth),[]byte(s.token))==1
+}
+func (s *server) headers(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+        w.Header().Set("X-Content-Type-Options","nosniff")
+        w.Header().Set("Referrer-Policy","no-referrer")
+        w.Header().Set("Content-Security-Policy","default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        if strings.HasPrefix(r.URL.Path,"/api/") && !s.authorized(r) { http.Error(w,"unauthorized",http.StatusUnauthorized);return }
+        next.ServeHTTP(w,r)
+    })
+}
+func jsonResponse(w http.ResponseWriter,v any) {
+    w.Header().Set("Content-Type","application/json; charset=utf-8")
+    _=json.NewEncoder(w).Encode(v)
+}
+func (s *server) index(w http.ResponseWriter,r *http.Request){
+    if r.URL.Path!="/" {http.NotFound(w,r);return}
+    if r.Method!=http.MethodGet { http.Error(w,"method not allowed",405);return }
+    w.Header().Set("Content-Type","text/html; charset=utf-8")
+    _=s.page.Execute(w,nil)
+}
+func (s *server) document(w http.ResponseWriter,r *http.Request){
+    if r.Method!=http.MethodGet {http.Error(w,"method not allowed",405);return}
+    s.mu.RLock();defer s.mu.RUnlock()
+    if s.doc==nil {jsonResponse(w,map[string]any{"loaded":false});return}
+    jsonResponse(w,map[string]any{"loaded":true,"filename":s.filename,"version":s.doc.Version,"count":s.doc.Count,"revision":s.revision,"root":s.doc.Root})
+}
+func (s *server) importFile(w http.ResponseWriter,r *http.Request){
+    if r.Method!=http.MethodPost {http.Error(w,"method not allowed",405);return}
+    // Prevent cross-site uploads even in local unauthenticated mode.
+    if origin:=r.Header.Get("Origin");origin!="" {
+        if !strings.EqualFold(origin,"http://"+r.Host) && !strings.EqualFold(origin,"https://"+r.Host) {http.Error(w,"cross-origin request rejected",403);return}
+    }
+    r.Body=http.MaxBytesReader(w,r.Body,fwbxml.MaxDocumentSize)
+    err:=r.ParseMultipartForm(4<<20)
+    if err!=nil {http.Error(w,"invalid upload: "+err.Error(),400);return}
+    f,h,err:=r.FormFile("file")
+    if err!=nil {http.Error(w,"missing file",400);return}
+    defer f.Close()
+    d,err:=fwbxml.Parse(io.LimitReader(f,fwbxml.MaxDocumentSize+1))
+    if err!=nil {http.Error(w,"invalid .fwb: "+err.Error(),400);return}
+    s.mu.Lock();s.doc=d;s.filename=h.Filename;s.revision++;s.mu.Unlock()
+    jsonResponse(w,map[string]any{"loaded":true,"filename":h.Filename,"version":d.Version,"count":d.Count})
+}
+func (s *server) rules(w http.ResponseWriter,r *http.Request){
+    if r.Method!=http.MethodGet {http.Error(w,"method not allowed",405);return}
+    id:=r.URL.Query().Get("id")
+    s.mu.RLock();defer s.mu.RUnlock()
+    if s.doc==nil {http.Error(w,"no file loaded",404);return}
+    rules,err:=s.doc.Rules(id)
+    if err!=nil {http.Error(w,err.Error(),400);return}
+    jsonResponse(w,rules)
+}
+
+func (s *server) editPolicy(w http.ResponseWriter,r *http.Request){
+    if r.Method!=http.MethodPost {http.Error(w,"method not allowed",405);return}
+    if origin:=r.Header.Get("Origin");origin!="" && !strings.EqualFold(origin,"http://"+r.Host) && !strings.EqualFold(origin,"https://"+r.Host) {http.Error(w,"cross-origin request rejected",403);return}
+    var req fwbxml.PolicyEdit
+    dec:=json.NewDecoder(http.MaxBytesReader(w,r.Body,64<<10));dec.DisallowUnknownFields()
+    if err:=dec.Decode(&req);err!=nil {http.Error(w,err.Error(),400);return}
+    s.mu.Lock();defer s.mu.Unlock()
+    if s.doc==nil {http.Error(w,"no file loaded",404);return}
+    if req.Revision!=s.revision {http.Error(w,"stale document revision",409);return}
+    if err:=s.doc.EditPolicy(req);err!=nil {http.Error(w,err.Error(),400);return}
+    s.revision++
+    jsonResponse(w,map[string]any{"revision":s.revision})
+}
+
+// editObject updates only the explicitly supported fields, preserving unknown XML data.
+func (s *server) editObject(w http.ResponseWriter,r *http.Request){
+ if r.Method!=http.MethodPost {http.Error(w,"method not allowed",405);return}
+ if origin:=r.Header.Get("Origin");origin!="" && !strings.EqualFold(origin,"http://"+r.Host) && !strings.EqualFold(origin,"https://"+r.Host) {http.Error(w,"cross-origin request rejected",403);return}
+ var req struct{ID string `json:"id"`;Revision uint64 `json:"revision"`;Fields map[string]string `json:"fields"`}
+ dec:=json.NewDecoder(http.MaxBytesReader(w,r.Body,32<<10));dec.DisallowUnknownFields()
+ if err:=dec.Decode(&req);err!=nil {http.Error(w,err.Error(),400);return}
+ s.mu.Lock();defer s.mu.Unlock()
+ if s.doc==nil {http.Error(w,"no file loaded",404);return}
+ if req.Revision!=s.revision {http.Error(w,"stale document revision",409);return}
+ n:=s.doc.Resolve(req.ID);if n==nil {http.Error(w,"object not found",404);return}
+ allowed:=map[string][]string{
+ "IPv4":{"name","comment","address"},"IPv6":{"name","comment","address"},
+ "Network":{"name","comment","address","netmask"},"NetworkIPv6":{"name","comment","address","netmask"},
+ "AddressRange":{"name","comment","start_address","end_address"},
+ "DNSName":{"name","comment","dnsname"},
+ "TCPService":{"name","comment","src_range_start","src_range_end","dst_range_start","dst_range_end"},
+ "UDPService":{"name","comment","src_range_start","src_range_end","dst_range_start","dst_range_end"},
+ "ObjectGroup":{"name","comment"},
+ }
+ fields,ok:=allowed[n.Type];if !ok {http.Error(w,"object type is not editable yet",400);return}
+ if len(req.Fields)==0 {http.Error(w,"no changes",400);return}
+ valid:=map[string]bool{};for _,key:=range fields {valid[key]=true}
+ for key,value:=range req.Fields {
+  if !valid[key] {http.Error(w,"unsupported field: "+key,400);return}
+  if len(value)>4096 {http.Error(w,"field too long",400);return}
+  switch key {
+  case "name":if strings.TrimSpace(value)=="" {http.Error(w,"name must not be empty",400);return}
+  case "address","start_address","end_address":
+   ip:=net.ParseIP(value);if ip==nil || (strings.Contains(n.Type,"IPv6") && ip.To4()!=nil) || (!strings.Contains(n.Type,"IPv6") && n.Type!="AddressRange" && ip.To4()==nil) {http.Error(w,"invalid IP address",400);return}
+  case "netmask":
+   if net.ParseIP(value)==nil {http.Error(w,"invalid netmask",400);return}
+  case "src_range_start","src_range_end","dst_range_start","dst_range_end":
+   var port int; if _,err:=fmt.Sscanf(value,"%d",&port);err!=nil || port<0 || port>65535 {http.Error(w,"invalid port",400);return}
+  }
+ }
+ if n.Attributes==nil {n.Attributes=map[string]string{}}
+ for key,value:=range req.Fields {n.Attributes[key]=value;if key=="name" {n.Name=value}}
+ s.revision++;jsonResponse(w,map[string]any{"revision":s.revision})
+}
+
+const indexHTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>fwbuilder-web</title>
+<style>
+:root{font:14px system-ui,sans-serif;color:#e5e7eb;background:#101827}
+*{box-sizing:border-box}body{margin:0}header{display:flex;gap:16px;align-items:center;padding:14px 20px;background:#172235;border-bottom:1px solid #334155}
+h1{font-size:18px;margin:0}button,input{font:inherit}button{background:#2563eb;color:white;border:0;padding:8px 12px;border-radius:6px;cursor:pointer}
+input{background:#0f172a;color:#e5e7eb;border:1px solid #475569;border-radius:6px;padding:8px}main{display:flex;min-height:0;height:calc(100vh - 68px);overflow:hidden}#workspace{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}#upper{display:flex;min-width:0;min-height:0;flex:1}#left-pane{flex:none;width:340px;min-width:170px}#right-pane{flex:1;min-width:180px;overflow:auto}#editor-pane{flex:none;height:260px;min-height:90px;overflow:auto;border-top:1px solid #334155;padding:12px 20px;background:#172235}#editor-pane[hidden],#horizontal-splitter[hidden]{display:none}.splitter{flex:none;background:#334155;touch-action:none;user-select:none;position:relative;z-index:2}.splitter:hover,.splitter.dragging{background:#60a5fa}#vertical-splitter{width:6px;cursor:col-resize}#horizontal-splitter{height:6px;cursor:row-resize}.pane-title{display:flex;align-items:center;gap:10px;justify-content:space-between}.pane-title button{background:#334155;padding:3px 9px}.toolbar-button{background:#334155}body.resizing{cursor:col-resize;user-select:none}body.resizing-y{cursor:row-resize;user-select:none}
+aside{overflow:auto;border-right:1px solid #334155;padding:12px}article{padding:10px 12px;overflow:auto}#tree button{background:none;text-align:left;width:100%;color:#dbeafe;padding:3px 4px;border-radius:4px;display:flex;align-items:center;gap:5px;white-space:nowrap}.fwb-icon{width:16px;height:16px;object-fit:contain;flex:none}.tree-twist{width:13px;flex:none;text-align:center}#library-select{width:100%;background:#0f172a;color:#e5e7eb;border:1px solid #475569;padding:6px;border-radius:4px}
+#tree button:hover,#tree button.sel{background:#334155}.entry{margin-left:14px;border-left:1px solid #334155;padding-left:7px}
+small,.muted{color:#94a3b8}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #334155;padding:10px;text-align:left;vertical-align:top}th{color:#93c5fd}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#172235;padding:12px;border-radius:6px}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+@media(max-width:700px){#left-pane{min-width:110px}#right-pane{min-width:120px}#editor-pane{min-height:75px}}
+.policy-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 8px}.policy-heading h3{margin:5px 0;font-size:16px}.policy-heading span{font-size:12px;color:#94a3b8}.policy-scroll{overflow:auto;max-width:100%;border:1px solid #334155}.policy-table{table-layout:auto;border-collapse:separate;border-spacing:0;width:100%;margin:0;font-size:12px}.policy-table th{position:sticky;top:0;z-index:1;background:#243248;color:#cbd5e1;white-space:nowrap;text-align:left;font-size:12px;padding:7px 9px;border-right:1px solid #475569;border-bottom:2px solid #64748b}.policy-table td{padding:5px 8px;border-right:1px solid #334155;border-bottom:1px solid #334155;vertical-align:top}.policy-table .rule-number{min-width:35px;text-align:right;color:#94a3b8}.policy-table .object-cell{min-width:125px}.object-line{display:flex;align-items:center;gap:5px;min-height:22px;white-space:nowrap;cursor:pointer}.object-line:hover{color:#93c5fd}.object-icon{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:4px;color:#38bdf8;background:#164e63;font-size:14px;flex:none}.policy-row:hover{background:#233149}.policy-row.rule-selected{background:#475569}.policy-row.rule-disabled{opacity:.55}.direction-label{color:#93c5fd;white-space:nowrap}.action-pill{white-space:nowrap;font-weight:600}.action-pill.accept{color:#4ade80}.action-pill.deny{color:#f87171}.action-pill.other{color:#fbbf24}.option-cell{text-align:center;color:#fbbf24}.comment-cell{min-width:160px;max-width:360px;overflow-wrap:anywhere}.rule-controls{white-space:nowrap}.rule-controls button{padding:3px 6px;margin-right:3px;font-size:11px;background:#334155}
+.group-members td:first-child{white-space:nowrap}.group-members td:first-child img{vertical-align:middle;margin-right:7px}.group-members td:first-child span{vertical-align:middle}.object-form{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:12px 0}.object-form label{display:flex;flex-direction:column;gap:5px;min-width:160px}.object-form input,.object-form textarea{min-width:160px;max-width:350px}.object-form textarea{background:#0f172a;color:#e5e7eb;border:1px solid #475569;border-radius:6px;padding:8px}</style></head><body><header><h1>🛡 fwbuilder-web</h1><span class="muted">Go • Policy editor (in-memory)</span><input type="file" id="upload" accept=".fwb,.xml"><button id="load">Import .fwb</button><button class="toolbar-button" id="toggle-editor" type="button">Hide Editor</button><button class="toolbar-button" id="reset-layout" type="button">Reset Layout</button><span id="status"></span></header>
+<main id="workspace"><div id="upper"><aside id="left-pane"><div class="toolbar"><label for="library-select">Library:</label><select id="library-select" aria-label="Select library"></select><input id="search" placeholder="Search objects…" aria-label="Search objects" style="width:100%"></div><div id="tree"></div></aside><div id="vertical-splitter" class="splitter" role="separator" aria-label="Resize object tree" aria-orientation="vertical" tabindex="0" aria-valuemin="170" aria-valuenow="340"></div><article id="right-pane"><div id="detail"><h2>Firewall Builder</h2><p class="muted">Import an existing .fwb file to browse its objects and rule sets.</p></div></article></div><div id="horizontal-splitter" class="splitter" role="separator" aria-label="Resize properties editor" aria-orientation="horizontal" tabindex="0" aria-valuemin="90" aria-valuenow="260"></div><section id="editor-pane"><div class="pane-title"><strong>Object Properties</strong><button id="close-editor" type="button" aria-label="Close properties editor">×</button></div><div id="properties-content" class="muted">Select an object in the tree to inspect its properties.</div></section></main>
+<script>
+const tree=document.getElementById('tree'), detail=document.getElementById('detail'), status=document.getElementById('status');
+let root=null, activeLibrary='', revision=0, selectedObject=null, token=sessionStorage.getItem('fwb-token')||'';
+function headers(){return token?{'Authorization':'Bearer '+token}:{}}
+async function api(url,opt={}){let res=await fetch(url,{...opt,headers:{...headers(),...(opt.headers||{})}});if(res.status===401){token=prompt('API bearer token')||'';sessionStorage.setItem('fwb-token',token);return api(url,opt)}if(!res.ok)throw Error(await res.text());return res.json()}
+function el(t,txt){const n=document.createElement(t);if(txt!==undefined)n.textContent=txt;return n}
+function iconName(type){const names={Library:'library',ObjectGroup:'object-group',ServiceGroup:'service-group',IPv4:'address',IPv6:'address6',Network:'network',NetworkIPv6:'network6',AddressRange:'rangeaddress',AddressTable:'addresstable',DNSName:'domainname',Host:'host',Firewall:'firewall',Cluster:'cluster',Interface:'interface',Policy:'ruleset',NAT:'nat',Routing:'routing',TCPService:'service-tcp',UDPService:'service-udp',IPService:'service-ip',ICMPService:'service-icmp',ICMP6Service:'service-icmp6',CustomService:'service-custom',Interval:'clock',IntervalGroup:'clock-group',RuleSet:'ruleset'};return names[type]||(type.endsWith('Group')?'object-group':'folder')}
+function iconElement(type){const img=el('img');img.src='/icons/'+iconName(type)+'_16.png';img.alt='';img.className='fwb-icon';return img}
+const treeExpanded=new Set();
+const topLevelOrder=['clusters','firewalls','objects','services'];
+function orderedChildren(node){
+ // Rule sets are leaf nodes in the object browser; their rules belong to the right-hand table.
+ if(['Policy','NAT','Routing'].includes(node.type))return [];
+ // System folders (Clusters, Firewalls, Objects) can also be ObjectGroup nodes.
+ // Only actual reference-based object groups are leaves in the browser.
+ if(node.type==='ObjectGroup' && (node.children||[]).some(c=>c.type==='ObjectRef'))return [];
+ const children=[...(node.children||[])];
+ if(node.type==='Library'){
+  const rank=n=>{const i=topLevelOrder.indexOf((n.name||'').trim().toLowerCase());return i<0?topLevelOrder.length:i};
+  children.sort((a,b)=>rank(a)-rank(b));
+ }
+ return children;
+}
+function renderNode(n,parent,depth,query){
+ const children=orderedChildren(n);
+ const matches=((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(query);
+ if(query&&!matches&&!children.some(c=>hasMatch(c,query)))return;
+ const wrap=el('div');wrap.className='entry';wrap.dataset.objectId=n.id||'';
+ const btn=el('button');const twist=el('span',' ');twist.className='tree-twist';
+ btn.append(twist,iconElement(n.type),el('span',n.name||n.type));
+ wrap.append(btn);parent.append(wrap);
+ const child=el('div');child.className='entry-list';wrap.append(child);
+ const key=activeLibrary+':'+(n.id||n.type+':'+n.name);
+ // The library root starts expanded; its first-level folders start collapsed.
+ const expanded=query.length>0 || (treeExpanded.has(key)) || (depth===0&&!treeExpanded.has('closed:'+key));
+ function setExpanded(open){
+  child.replaceChildren();
+  child.hidden=!open;
+  twist.textContent=children.length?(open?'▾':'▸'):' ';
+  if(open)for(const c of children)renderNode(c,child,depth+1,query);
+ }
+ setExpanded(expanded);
+ btn.onclick=()=>{
+  selectObject(n,btn);
+  if(!children.length)return;
+  const open=child.hidden;
+  if(open){treeExpanded.add(key);treeExpanded.delete('closed:'+key)}
+  else{treeExpanded.delete(key);if(depth===0)treeExpanded.add('closed:'+key)}
+  setExpanded(open);
+ };
+ btn.ondblclick=ev=>{ev.preventDefault();ev.stopPropagation();selectObject(n,btn);if(['Policy','NAT','Routing'].includes(n.type))show(n,btn);else renderProperties(n)};
+}
+function hasMatch(n,q){return ((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(q)||orderedChildren(n).some(c=>hasMatch(c,q))}
+function draw(){tree.replaceChildren();if(!root)return;const lib=findNode(root,activeLibrary);renderNode(lib||root,tree,0,document.getElementById('search').value.toLowerCase())}
+function updateLibraries(){const select=document.getElementById('library-select');const libs=[];function collect(n){if(n.type==='Library')libs.push(n);for(const c of n.children||[])collect(c)}if(root)collect(root);const previous=activeLibrary;select.replaceChildren();for(const lib of libs){const opt=el('option',lib.name||lib.id);opt.value=lib.id;select.append(opt)}if(!libs.some(x=>x.id===previous))activeLibrary=libs[0]?.id||'';select.value=activeLibrary;select.disabled=!libs.length}
+document.getElementById('library-select').addEventListener('change',e=>{activeLibrary=e.target.value;draw()});
+function selectObject(n,button){selectedObject=n;document.querySelectorAll('#tree .sel').forEach(x=>x.classList.remove('sel'));if(button)button.classList.add('sel')}
+async function show(n,button){selectObject(n,button);if(!['Policy','NAT','Routing'].includes(n.type))return;detail.replaceChildren();
+if(['Policy','NAT','Routing'].includes(n.type)){try{
+const rules=await api('/api/rules?id='+encodeURIComponent(n.id));
+const heading=el('div');heading.className='policy-heading';heading.append(el('h3',(n.name||n.type)+' / '+n.type));heading.append(el('span',rules.length+' rules'));detail.append(heading);
+const viewport=el('div');viewport.className='policy-scroll';const t=el('table');t.className='policy-table';
+const head=el('thead'),hr=el('tr');
+for(const name of ['#','Source','Destination','Service','Interface','Direction','Action','Time','Options','Comment','']){const th=el('th',name);hr.append(th)}
+head.append(hr);t.append(head);const body=el('tbody');
+function objects(rule,keys){const out=[];for(const key of keys)out.push(...(rule.details?.[key]||[]));return out}
+function objectCell(row,items){const cell=el('td');cell.className='object-cell';if(!items.length){cell.append(el('span','Any'));row.append(cell);return}
+for(const obj of items){const line=el('div');line.className='object-line';const symbol=iconElement(obj.type);symbol.title=obj.type;line.append(symbol,el('span',obj.name));if(obj.id&&root){line.title=obj.type+' · '+obj.name;line.ondblclick=ev=>{ev.preventDefault();ev.stopPropagation();navigateToTreeObject(obj.id)}}cell.append(line)}row.append(cell)}
+rules.forEach((r,i)=>{const row=el('tr');row.className='policy-row';if(r.disabled==='True')row.classList.add('rule-disabled');
+row.onclick=()=>{body.querySelectorAll('.rule-selected').forEach(x=>x.classList.remove('rule-selected'));row.classList.add('rule-selected')};
+const num=el('td',String(i));num.className='rule-number';row.append(num);
+objectCell(row,objects(r,['Src','OSrc','RSrc']));
+objectCell(row,objects(r,['Dst','ODst','RDst']));
+objectCell(row,objects(r,['Srv','OSrv','TSrv']));
+objectCell(row,objects(r,['Itf','Interface','IItf','OItf']));
+const direction=el('td');const dir=el('span',(r.direction==='Inbound'?'↓ ':r.direction==='Outbound'?'↑ ':'↕ ')+(r.direction||'Both'));dir.className='direction-label';direction.append(dir);row.append(direction);
+const action=el('td');const pill=el('span',(r.action==='Accept'?'✓ ':r.action==='Deny'||r.action==='Reject'?'⊘ ':'• ')+(r.action||r.type));pill.className='action-pill '+(r.action==='Accept'?'accept':r.action==='Deny'||r.action==='Reject'?'deny':'other');action.append(pill);row.append(action);
+objectCell(row,objects(r,['When','Time']));
+const opts=el('td',r.options?'☑':'');opts.className='option-cell';row.append(opts);
+const comment=el('td',r.comment||'');comment.className='comment-cell';row.append(comment);
+const controls=el('td');controls.className='rule-controls';if(n.type==='Policy'){const edit=el('button','Edit');edit.onclick=ev=>{ev.stopPropagation();editRule(n,r)};controls.append(edit);
+for(const [label,delta] of [['↑',-1],['↓',1]]){const btn=el('button',label);btn.title=delta<0?'Move up':'Move down';btn.onclick=ev=>{ev.stopPropagation();moveRule(n,r,delta)};controls.append(btn)}}row.append(controls);body.append(row)});
+t.append(body);viewport.append(t);detail.append(viewport);
+}catch(e){detail.append(el('p','Rules: '+e.message))}}
+
+}
+async function applyEdit(payload){try{const result=await api('/api/policy/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,revision})});revision=result.revision;await refresh();return true}catch(e){alert('Edit failed: '+e.message);return false}}
+async function moveRule(set,r,offset){if(await applyEdit({set_id:set.id,rule_id:r.id,move:offset}))await show(findNode(root,set.id))}
+function objectIcon(type){if(/Service/.test(type))return "⚙";if(/Network|AddressRange/.test(type))return "▣";if(/Firewall|Cluster/.test(type))return "▤";if(/Interface/.test(type))return "▥";if(/Host|IPv4|IPv6|DNSName/.test(type))return "▣";if(/Group/.test(type))return "▦";return "◆"}
+function findPath(n,id,path=[]){if(!n)return null;const next=[...path,n];if(n.id===id)return next;for(const c of n.children||[]){const found=findPath(c,id,next);if(found)return found}return null}
+function navigateToTreeObject(id){const path=findPath(root,id);if(!path)return;const lib=path.find(n=>n.type==='Library');if(lib&&lib.id!==activeLibrary){activeLibrary=lib.id;document.getElementById('library-select').value=lib.id}const search=document.getElementById('search');search.value='';for(const n of path){const key=activeLibrary+':'+(n.id||n.type+':'+n.name);treeExpanded.add(key);treeExpanded.delete('closed:'+key)}draw();const buttons=document.querySelectorAll('#tree .entry');for(const entry of buttons){if(entry.dataset.objectId===id){const btn=entry.querySelector(':scope > button');if(btn){selectObject(path[path.length-1],btn);btn.scrollIntoView({block:'center',inline:'nearest'});btn.focus({preventScroll:true})}break}}}
+function findNode(n,id){if(n.id===id)return n;for(const c of n.children||[]){const x=findNode(c,id);if(x)return x}return null}
+async function editRule(set,r){detail.replaceChildren();detail.append(el('h2','Edit policy rule'));const form=el('form');const fields={};
+function field(label,value,choices){const wrap=el('p');wrap.append(el('label',label+' '));let control;if(choices){control=el('select');for(const choice of choices){const o=el('option',choice);o.value=choice;control.append(o)}control.value=value}else{control=el('input');control.value=value||'';control.style.width='70%'}wrap.append(control);form.append(wrap);return control}
+fields.action=field('Action',r.action,['Accept','Deny','Reject','Continue','Accounting','Return','Branch','Custom','Modify','Pipe','Scrub','Skip']);
+fields.direction=field('Direction',r.direction||'Both',['Both','Inbound','Outbound']);
+fields.comment=field('Comment',r.comment||'');
+fields.disabled=field('Disabled',r.disabled||'False',['False','True']);
+const objectTypes={Src:['IPv4','IPv6','Network','NetworkIPv6','Host','Firewall','AddressRange','DNSName','ObjectGroup','AnyNetwork'],Dst:['IPv4','IPv6','Network','NetworkIPv6','Host','Firewall','AddressRange','DNSName','ObjectGroup','AnyNetwork'],Srv:['TCPService','UDPService','IPService','ICMPService','ICMP6Service','ServiceGroup','CustomService','AnyIPService']};
+const refs={};for(const [key,types] of Object.entries(objectTypes)){const wrap=el('p');wrap.append(el('label',key+' '));const select=el('select');select.multiple=true;select.size=6;select.style.minWidth='320px';const candidates=[];function collect(n){if(n.id&&types.includes(n.type))candidates.push(n);for(const c of n.children||[])collect(c)}collect(root);for(const obj of candidates){const o=el('option',(obj.name||obj.type)+' ['+obj.type+']');o.value=obj.id;const selected=(r.elements?.[key]||[]).includes(obj.name||obj.type);o.selected=selected;select.append(o)}wrap.append(select);form.append(wrap);refs[key]=select}
+const save=el('button','Apply changes');save.type='submit';form.append(save);const cancel=el('button','Cancel');cancel.type='button';cancel.onclick=()=>show(set);form.append(cancel);
+form.onsubmit=async ev=>{ev.preventDefault();const payload={set_id:set.id,rule_id:r.id,action:fields.action.value,direction:fields.direction.value,comment:fields.comment.value,disabled:fields.disabled.value,refs:{}};for(const [key,select] of Object.entries(refs))payload.refs[key]=Array.from(select.selectedOptions).map(o=>o.value);if(await applyEdit(payload))await show(findNode(root,set.id))};detail.append(form)}
+function renderProperties(n){
+ const p=document.getElementById('properties-content');p.replaceChildren();if(!n)return;
+ p.append(el('h3',(n.name||n.type)+' · '+n.type));
+ const schemas={
+ IPv4:[['name','Name'],['address','Address'],['comment','Comment']],
+ IPv6:[['name','Name'],['address','Address'],['comment','Comment']],
+ Network:[['name','Name'],['address','Address'],['netmask','Netmask'],['comment','Comment']],
+ NetworkIPv6:[['name','Name'],['address','Address'],['netmask','Netmask'],['comment','Comment']],
+ AddressRange:[['name','Name'],['start_address','Start address'],['end_address','End address'],['comment','Comment']],
+ DNSName:[['name','Name'],['dnsname','DNS name'],['comment','Comment']],
+ TCPService:[['name','Name'],['src_range_start','Source port from'],['src_range_end','Source port to'],['dst_range_start','Destination port from'],['dst_range_end','Destination port to'],['comment','Comment']],
+ UDPService:[['name','Name'],['src_range_start','Source port from'],['src_range_end','Source port to'],['dst_range_start','Destination port from'],['dst_range_end','Destination port to'],['comment','Comment']],
+ ObjectGroup:[['name','Name'],['comment','Comment']]
+ };
+ const schema=schemas[n.type];
+ if(schema){
+  const form=el('form');form.className='object-form';const controls={};
+  for(const [key,label] of schema){const line=el('label');line.textContent=label;const control=key==='comment'?el('textarea'):el('input');control.value=n.attributes?.[key]|| (key==='name'?n.name||'':'');control.name=key;line.append(control);form.append(line);controls[key]=control}
+  const save=el('button','Apply changes');save.type='submit';form.append(save);
+  const message=el('span');message.className='muted';form.append(message);
+  form.onsubmit=async ev=>{ev.preventDefault();const fields={};for(const [key,input] of Object.entries(controls))if(input.value!==(n.attributes?.[key]||''))fields[key]=input.value;
+   if(!Object.keys(fields).length){message.textContent='No changes';return}
+   try{const result=await api('/api/object/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:n.id,revision,fields})});revision=result.revision;Object.assign(n.attributes,fields);if(fields.name!==undefined)n.name=fields.name;message.textContent='Changes applied (in memory)';draw()}
+   catch(e){message.textContent='Error: '+e.message}
+  };p.append(form);
+ }else{
+  const table=el('table');for(const [key,value] of Object.entries(n.attributes||{})){const tr=el('tr');tr.append(el('th',key),el('td',value));table.append(tr)}p.append(table);
+ }
+ if(n.type==='ObjectGroup'){
+  p.append(el('h4','Group members'));const members=el('table');const header=el('tr');header.append(el('th','Name'),el('th','Properties'));members.append(header);
+  for(const ref of (n.children||[]).filter(c=>c.type==='ObjectRef')){const obj=findNode(root,ref.attributes?.ref);const row=el('tr');const name=el('td');name.append(iconElement(obj?.type||'ObjectGroup'),el('span',obj?.name||ref.attributes?.ref||''));const a=obj?.attributes||{};row.append(name,el('td',[a.address,a.netmask,a.start_address,a.end_address].filter(Boolean).join(' / ')||obj?.type||''));members.append(row)}p.append(members)
+ }
+}
+const layoutKey='fwbuilder-web-layout-v1',defaults={left:340,bottom:260,editor:true};
+function readLayout(){try{const x=JSON.parse(localStorage.getItem(layoutKey));return {...defaults,...x}}catch{return {...defaults}}}
+let layout=readLayout();const leftPane=document.getElementById('left-pane'),upper=document.getElementById('upper'),workspace=document.getElementById('workspace'),editorPane=document.getElementById('editor-pane'),vertical=document.getElementById('vertical-splitter'),horizontal=document.getElementById('horizontal-splitter');
+function clamp(v,min,max){return Math.min(Math.max(v,min),Math.max(min,max))}
+function applyLayout(){const maxLeft=Math.max(170,upper.clientWidth-190);layout.left=clamp(layout.left,170,maxLeft);leftPane.style.width=layout.left+'px';const maxBottom=Math.max(90,workspace.clientHeight-140);layout.bottom=clamp(layout.bottom,90,maxBottom);editorPane.style.height=layout.bottom+'px';editorPane.hidden=!layout.editor;horizontal.hidden=!layout.editor;document.getElementById('toggle-editor').textContent=layout.editor?'Hide Editor':'Show Editor';vertical.setAttribute('aria-valuenow',String(Math.round(layout.left)));horizontal.setAttribute('aria-valuenow',String(Math.round(layout.bottom)))}
+function saveLayout(){localStorage.setItem(layoutKey,JSON.stringify(layout))}
+function setEditor(open){layout.editor=open;applyLayout();saveLayout()}
+document.getElementById('toggle-editor').onclick=()=>setEditor(!layout.editor);
+document.getElementById('close-editor').onclick=()=>setEditor(false);
+document.getElementById('reset-layout').onclick=()=>{layout={...defaults};applyLayout();saveLayout()};
+function setupSplitter(handle,axis){handle.addEventListener('pointerdown',e=>{if(e.button!==0)return;e.preventDefault();handle.setPointerCapture(e.pointerId);handle.classList.add('dragging');document.body.classList.add(axis==='x'?'resizing':'resizing-y');const start=axis==='x'?e.clientX:e.clientY;const initial=axis==='x'?layout.left:layout.bottom;
+const move=ev=>{if(axis==='x')layout.left=initial+ev.clientX-start;else layout.bottom=initial+start-ev.clientY;applyLayout()};
+const stop=()=>{handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',stop);handle.removeEventListener('pointercancel',stop);handle.classList.remove('dragging');document.body.classList.remove('resizing','resizing-y');saveLayout()};
+handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',stop);handle.addEventListener('pointercancel',stop)});
+handle.addEventListener('dblclick',()=>{if(axis==='x')layout.left=defaults.left;else layout.bottom=defaults.bottom;applyLayout();saveLayout()});
+handle.addEventListener('keydown',e=>{const delta=e.shiftKey?40:10;if(axis==='x'&&(e.key==='ArrowLeft'||e.key==='ArrowRight'))layout.left+=e.key==='ArrowRight'?delta:-delta;else if(axis==='y'&&(e.key==='ArrowUp'||e.key==='ArrowDown'))layout.bottom+=e.key==='ArrowUp'?delta:-delta;else return;e.preventDefault();applyLayout();saveLayout()})}
+setupSplitter(vertical,'x');setupSplitter(horizontal,'y');window.addEventListener('resize',applyLayout);applyLayout();
+document.getElementById('search').addEventListener('input',draw);
+document.getElementById('load').onclick=async()=>{const file=document.getElementById('upload').files[0];if(!file)return;const form=new FormData();form.append('file',file);try{status.textContent='Importing…';const x=await api('/api/import',{method:'POST',body:form});status.textContent=x.filename+' · '+x.count+' nodes';await refresh()}catch(e){status.textContent=e.message}};
+async function refresh(){try{const d=await api('/api/document');if(d.loaded){root=d.root;revision=d.revision;selectedObject=null;renderProperties(null);updateLibraries();if(selectedObject){selectedObject=findNode(root,selectedObject.id)||null;renderProperties(selectedObject)}status.textContent=d.filename+' · '+d.count+' nodes';draw()}else{status.textContent='No document loaded'}}catch(e){status.textContent=e.message}}
+refresh();
+</script></body></html>`
