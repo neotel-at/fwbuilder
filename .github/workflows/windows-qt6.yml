@@ -56,6 +56,20 @@ jobs:
           Write-Host "Using windeployqt: $deploy"
           & $deploy --release --no-translations (Join-Path $release 'fwbuilder.exe')
           if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
+          # windeployqt handles Qt dependencies, not the vcpkg DLLs linked by
+          # libxml2/libxslt/OpenSSL/zlib/liblzma. Bundle the runtime bin folder
+          # before producing both the portable ZIP and NSIS installer.
+          $vcpkgBin = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\${{ matrix.triplet }}\bin'
+          if (!(Test-Path $vcpkgBin)) { throw "vcpkg runtime directory missing: $vcpkgBin" }
+          $runtimeDlls = @(Get-ChildItem -Path $vcpkgBin -Filter '*.dll' -File)
+          if ($runtimeDlls.Count -eq 0) { throw "No vcpkg runtime DLLs found: $vcpkgBin" }
+          foreach ($dll in $runtimeDlls) {
+            Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $release $dll.Name) -Force
+            Write-Host "Bundled vcpkg runtime: $($dll.Name)"
+          }
+          if (!(Test-Path (Join-Path $release 'z.dll'))) {
+            throw "z.dll missing from staged release (check vcpkg zlib package: $vcpkgBin)"
+          }
           Compress-Archive -Path "$release/*" -DestinationPath "fwbuilder-6.0-win-${{ matrix.arch }}.zip"
       - name: Build NSIS installer
         shell: pwsh
