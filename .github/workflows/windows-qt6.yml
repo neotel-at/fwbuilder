@@ -4,13 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [feature/windows-qt6]
-  pull_request:
-    paths:
-      - '.github/workflows/windows-qt6.yml'
-      - 'CMakeLists.txt'
-      - 'cmake/**'
-      - 'src/**'
-      - 'packaging/**'
 
 jobs:
   windows:
