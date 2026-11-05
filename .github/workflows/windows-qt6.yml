@@ -46,9 +46,11 @@ jobs:
           cmake --install build-win --config Release
           $release = Join-Path (Resolve-Path build-win) 'release'
           if (!(Test-Path (Join-Path $release 'fwbuilder.exe'))) { throw 'fwbuilder.exe missing from install' }
-          # install-qt-action adds the host-side Qt tools to PATH; Qt6_DIR is not
-          # guaranteed to be set (in particular for the ARM64 cross-build).
-          $deploy = (Get-Command windeployqt.exe -ErrorAction Stop).Source
+          # ARM64 cross-build requires the x64 host deployment tool.
+          $deploy = Join-Path $env:QT_HOST_PATH 'bin\windeployqt.exe'
+          if (!(Test-Path $deploy)) {
+            throw "Host windeployqt.exe not found: $deploy"
+          }
           Write-Host "Using windeployqt: $deploy"
           & $deploy --release --no-translations (Join-Path $release 'fwbuilder.exe')
           if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
