@@ -16,7 +16,6 @@ InstallDir "$PROGRAMFILES64\Firewall Builder 6 (${ARCH})"
 InstallDirRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\FWBuilder6-${ARCH}" "InstallLocation"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
-SetRegView 64
 ShowInstDetails show
 ShowUninstDetails show
 !define MUI_ABORTWARNING
@@ -28,8 +27,15 @@ ShowUninstDetails show
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+Function .onInit
+  SetRegView 64
+FunctionEnd
+Function un.onInit
+  SetRegView 64
+FunctionEnd
 Section "Firewall Builder" SecMain
   SectionIn RO
+  SetRegView 64
   SetShellVarContext all
   SetOutPath "$INSTDIR"
   ; Bundle the whole deployed Qt6 release, including resources and compilers.
