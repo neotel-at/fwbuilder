@@ -22,7 +22,7 @@ ELSE()
 ENDIF()
 
 IF (WIN32)
-  target_link_libraries(fwbuilder-gui lzma iconv)
+  target_link_libraries(fwbuilder-gui LibLZMA::LibLZMA Iconv::Iconv)
 ENDIF()
 
 IF (UNIX AND NOT APPLE)
