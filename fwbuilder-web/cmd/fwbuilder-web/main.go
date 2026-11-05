@@ -134,7 +134,7 @@ aside{overflow:auto;border-right:1px solid #334155;padding:12px}article{padding:
 small,.muted{color:#94a3b8}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #334155;padding:10px;text-align:left;vertical-align:top}th{color:#93c5fd}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#172235;padding:12px;border-radius:6px}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 @media(max-width:700px){#left-pane{min-width:110px}#right-pane{min-width:120px}#editor-pane{min-height:75px}}
 .policy-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 8px}.policy-heading h3{margin:5px 0;font-size:16px}.policy-heading span{font-size:12px;color:#94a3b8}.policy-scroll{overflow:auto;max-width:100%;border:1px solid #334155}.policy-table{table-layout:auto;border-collapse:separate;border-spacing:0;width:100%;margin:0;font-size:12px}.policy-table th{position:sticky;top:0;z-index:1;background:#243248;color:#cbd5e1;white-space:nowrap;text-align:left;font-size:12px;padding:7px 9px;border-right:1px solid #475569;border-bottom:2px solid #64748b}.policy-table td{padding:5px 8px;border-right:1px solid #334155;border-bottom:1px solid #334155;vertical-align:top}.policy-table .rule-number{min-width:35px;text-align:right;color:#94a3b8}.policy-table .object-cell{min-width:125px}.object-line{display:flex;align-items:center;gap:5px;min-height:22px;white-space:nowrap;cursor:pointer}.object-line:hover{color:#93c5fd}.object-icon{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:4px;color:#38bdf8;background:#164e63;font-size:14px;flex:none}.policy-row:hover{background:#233149}.policy-row.rule-selected{background:#475569}.policy-row.rule-disabled{opacity:.55}.direction-label{color:#93c5fd;white-space:nowrap}.action-pill{white-space:nowrap;font-weight:600}.action-pill.accept{color:#4ade80}.action-pill.deny{color:#f87171}.action-pill.other{color:#fbbf24}.option-cell{text-align:center;color:#fbbf24}.comment-cell{min-width:160px;max-width:360px;overflow-wrap:anywhere}.rule-controls{white-space:nowrap}.rule-controls button{padding:3px 6px;margin-right:3px;font-size:11px;background:#334155}
-</style></head><body><header><h1>🛡 fwbuilder-web</h1><span class="muted">Go • Policy editor (in-memory)</span><input type="file" id="upload" accept=".fwb,.xml"><button id="load">Import .fwb</button><button class="toolbar-button" id="toggle-editor" type="button">Hide Editor</button><button class="toolbar-button" id="reset-layout" type="button">Reset Layout</button><span id="status"></span></header>
+.group-members td:first-child{white-space:nowrap}.group-members td:first-child img{vertical-align:middle;margin-right:7px}.group-members td:first-child span{vertical-align:middle}</style></head><body><header><h1>🛡 fwbuilder-web</h1><span class="muted">Go • Policy editor (in-memory)</span><input type="file" id="upload" accept=".fwb,.xml"><button id="load">Import .fwb</button><button class="toolbar-button" id="toggle-editor" type="button">Hide Editor</button><button class="toolbar-button" id="reset-layout" type="button">Reset Layout</button><span id="status"></span></header>
 <main id="workspace"><div id="upper"><aside id="left-pane"><div class="toolbar"><label for="library-select">Library:</label><select id="library-select" aria-label="Select library"></select><input id="search" placeholder="Search objects…" aria-label="Search objects" style="width:100%"></div><div id="tree"></div></aside><div id="vertical-splitter" class="splitter" role="separator" aria-label="Resize object tree" aria-orientation="vertical" tabindex="0" aria-valuemin="170" aria-valuenow="340"></div><article id="right-pane"><div id="detail"><h2>Firewall Builder</h2><p class="muted">Import an existing .fwb file to browse its objects and rule sets.</p></div></article></div><div id="horizontal-splitter" class="splitter" role="separator" aria-label="Resize properties editor" aria-orientation="horizontal" tabindex="0" aria-valuemin="90" aria-valuenow="260"></div><section id="editor-pane"><div class="pane-title"><strong>Object Properties</strong><button id="close-editor" type="button" aria-label="Close properties editor">×</button></div><div id="properties-content" class="muted">Select an object in the tree to inspect its properties.</div></section></main>
 <script>
 const tree=document.getElementById('tree'), detail=document.getElementById('detail'), status=document.getElementById('status');
@@ -148,7 +148,7 @@ const treeExpanded=new Set();
 const topLevelOrder=['clusters','firewalls','objects','services'];
 function orderedChildren(node){
  // Rule sets are leaf nodes in the object browser; their rules belong to the right-hand table.
- if(['Policy','NAT','Routing'].includes(node.type))return [];
+ if(['Policy','NAT','Routing','ObjectGroup'].includes(node.type))return [];
  const children=[...(node.children||[])];
  if(node.type==='Library'){
   const rank=n=>{const i=topLevelOrder.indexOf((n.name||'').trim().toLowerCase());return i<0?topLevelOrder.length:i};
@@ -235,7 +235,27 @@ const objectTypes={Src:['IPv4','IPv6','Network','NetworkIPv6','Host','Firewall',
 const refs={};for(const [key,types] of Object.entries(objectTypes)){const wrap=el('p');wrap.append(el('label',key+' '));const select=el('select');select.multiple=true;select.size=6;select.style.minWidth='320px';const candidates=[];function collect(n){if(n.id&&types.includes(n.type))candidates.push(n);for(const c of n.children||[])collect(c)}collect(root);for(const obj of candidates){const o=el('option',(obj.name||obj.type)+' ['+obj.type+']');o.value=obj.id;const selected=(r.elements?.[key]||[]).includes(obj.name||obj.type);o.selected=selected;select.append(o)}wrap.append(select);form.append(wrap);refs[key]=select}
 const save=el('button','Apply changes');save.type='submit';form.append(save);const cancel=el('button','Cancel');cancel.type='button';cancel.onclick=()=>show(set);form.append(cancel);
 form.onsubmit=async ev=>{ev.preventDefault();const payload={set_id:set.id,rule_id:r.id,action:fields.action.value,direction:fields.direction.value,comment:fields.comment.value,disabled:fields.disabled.value,refs:{}};for(const [key,select] of Object.entries(refs))payload.refs[key]=Array.from(select.selectedOptions).map(o=>o.value);if(await applyEdit(payload))await show(findNode(root,set.id))};detail.append(form)}
-function renderProperties(n){const p=document.getElementById('properties-content');p.replaceChildren();if(!n)return;const title=el('h3',(n.name||n.type)+' · '+n.type);p.append(title);const table=el('table');for(const [key,value] of Object.entries(n.attributes||{})){const tr=el('tr');tr.append(el('th',key),el('td',value));table.append(tr)}p.append(table);if(n.text)p.append(el('pre',n.text))}
+function renderProperties(n){
+ const p=document.getElementById('properties-content');p.replaceChildren();if(!n)return;
+ const title=el('h3',(n.name||n.type)+' · '+n.type);p.append(title);
+ const table=el('table');for(const [key,value] of Object.entries(n.attributes||{})){const tr=el('tr');tr.append(el('th',key),el('td',value));table.append(tr)}p.append(table);
+ if(n.text)p.append(el('pre',n.text));
+ if(n.type!=='ObjectGroup')return;
+ p.append(el('h4','Group members'));
+ const memberTable=el('table');memberTable.className='group-members';
+ const header=el('tr');header.append(el('th','Name'),el('th','Properties'));memberTable.append(header);
+ const refs=(n.children||[]).filter(c=>c.type==='ObjectRef');
+ for(const ref of refs){
+  const id=ref.attributes?.ref||'';
+  const obj=findNode(root,id);
+  const row=el('tr');const name=el('td');name.append(iconElement(obj?.type||'ObjectGroup'),el('span',obj?.name||id));
+  const a=obj?.attributes||{};
+  const props=[a.address,a.netmask,a.start_address,a.end_address].filter(Boolean).join(' / ')||obj?.type||'Unresolved reference';
+  row.append(name,el('td',props));memberTable.append(row);
+ }
+ p.append(memberTable);
+ if(!refs.length)p.append(el('p','No group members'));
+}
 const layoutKey='fwbuilder-web-layout-v1',defaults={left:340,bottom:260,editor:true};
 function readLayout(){try{const x=JSON.parse(localStorage.getItem(layoutKey));return {...defaults,...x}}catch{return {...defaults}}}
 let layout=readLayout();const leftPane=document.getElementById('left-pane'),upper=document.getElementById('upper'),workspace=document.getElementById('workspace'),editorPane=document.getElementById('editor-pane'),vertical=document.getElementById('vertical-splitter'),horizontal=document.getElementById('horizontal-splitter');
