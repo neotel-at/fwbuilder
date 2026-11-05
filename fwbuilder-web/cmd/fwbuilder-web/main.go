@@ -144,10 +144,43 @@ async function api(url,opt={}){let res=await fetch(url,{...opt,headers:{...heade
 function el(t,txt){const n=document.createElement(t);if(txt!==undefined)n.textContent=txt;return n}
 function iconName(type){const names={Library:'library',ObjectGroup:'object-group',ServiceGroup:'service-group',IPv4:'address',IPv6:'address6',Network:'network',NetworkIPv6:'network6',AddressRange:'rangeaddress',AddressTable:'addresstable',DNSName:'domainname',Host:'host',Firewall:'firewall',Cluster:'cluster',Interface:'interface',Policy:'ruleset',NAT:'nat',Routing:'routing',TCPService:'service-tcp',UDPService:'service-udp',IPService:'service-ip',ICMPService:'service-icmp',ICMP6Service:'service-icmp6',CustomService:'service-custom',Interval:'clock',IntervalGroup:'clock-group',RuleSet:'ruleset'};return names[type]||(type.endsWith('Group')?'object-group':'folder')}
 function iconElement(type){const img=el('img');img.src='/icons/'+iconName(type)+'_16.png';img.alt='';img.className='fwb-icon';return img}
-function renderNode(n,parent,depth,query){const matches=((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(query);let children=n.children||[];let matching=children.some(c=>hasMatch(c,query));if(query&&!matches&&!matching)return;
-const wrap=el('div');wrap.className='entry';const btn=el('button');const twist=el('span',children.length?'▸':' ');twist.className='tree-twist';btn.append(twist,iconElement(n.type),el('span',n.name||n.type));btn.onclick=()=>show(n,btn);wrap.append(btn);parent.append(wrap);
-if(depth<2||query){const child=el('div');wrap.append(child);for(const c of children)renderNode(c,child,depth+1,query);twist.textContent=children.length?'▾':' '}
-else if(children.length){let opened=false;btn.onclick=()=>{show(n,btn);let child=wrap.querySelector('.entry-list');if(opened){child.remove();opened=false;twist.textContent='▸';return}child=el('div');child.className='entry-list';wrap.append(child);for(const c of children)renderNode(c,child,depth+1,query);opened=true;twist.textContent='▾'};twist.textContent='▸'}
+const treeExpanded=new Set();
+const topLevelOrder=['clusters','firewalls','objects','services'];
+function orderedChildren(node){
+ const children=[...(node.children||[])];
+ if(node.type==='Library'){
+  const rank=n=>{const i=topLevelOrder.indexOf((n.name||'').trim().toLowerCase());return i<0?topLevelOrder.length:i};
+  children.sort((a,b)=>rank(a)-rank(b));
+ }
+ return children;
+}
+function renderNode(n,parent,depth,query){
+ const children=orderedChildren(n);
+ const matches=((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(query);
+ if(query&&!matches&&!children.some(c=>hasMatch(c,query)))return;
+ const wrap=el('div');wrap.className='entry';
+ const btn=el('button');const twist=el('span',' ');twist.className='tree-twist';
+ btn.append(twist,iconElement(n.type),el('span',n.name||n.type));
+ wrap.append(btn);parent.append(wrap);
+ const child=el('div');child.className='entry-list';wrap.append(child);
+ const key=activeLibrary+':'+(n.id||n.type+':'+n.name);
+ // The library root starts expanded; its first-level folders start collapsed.
+ const expanded=query.length>0 || (treeExpanded.has(key)) || (depth===0&&!treeExpanded.has('closed:'+key));
+ function setExpanded(open){
+  child.replaceChildren();
+  child.hidden=!open;
+  twist.textContent=children.length?(open?'▾':'▸'):' ';
+  if(open)for(const c of children)renderNode(c,child,depth+1,query);
+ }
+ setExpanded(expanded);
+ btn.onclick=()=>{
+  show(n,btn);
+  if(!children.length)return;
+  const open=child.hidden;
+  if(open){treeExpanded.add(key);treeExpanded.delete('closed:'+key)}
+  else{treeExpanded.delete(key);if(depth===0)treeExpanded.add('closed:'+key)}
+  setExpanded(open);
+ };
 }
 function hasMatch(n,q){return ((n.name||'')+' '+n.type+' '+(n.id||'')).toLowerCase().includes(q)||(n.children||[]).some(c=>hasMatch(c,q))}
 function draw(){tree.replaceChildren();if(!root)return;const lib=findNode(root,activeLibrary);renderNode(lib||root,tree,0,document.getElementById('search').value.toLowerCase())}
