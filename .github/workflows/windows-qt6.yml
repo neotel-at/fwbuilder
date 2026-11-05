@@ -90,6 +90,27 @@ jobs:
           if (!(Test-Path (Join-Path $release 'z.dll'))) {
             throw "z.dll missing from staged release (check vcpkg zlib package: $vcpkgBin)"
           }
+          # Reject wrong-architecture PE images before uploading installers.
+          $expectedMachine = if ('${{ matrix.arch }}' -eq 'arm64') { 0xAA64 } else { 0x8664 }
+          $images = @(Get-ChildItem -LiteralPath $release -Recurse -File | Where-Object { $_.Extension -in @('.exe', '.dll') })
+          foreach ($image in $images) {
+            $stream = [System.IO.File]::OpenRead($image.FullName)
+            try {
+              $reader = [System.IO.BinaryReader]::new($stream)
+              if ($reader.ReadUInt16() -ne 0x5A4D) { throw "Not a PE image: $($image.FullName)" }
+              $stream.Position = 0x3C
+              $peOffset = $reader.ReadUInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) { throw "Invalid PE header: $($image.FullName)" }
+              $machine = [int]$reader.ReadUInt16()
+              if ($machine -ne $expectedMachine) {
+                throw ("Wrong PE architecture for {0}: 0x{1:X4} (expected 0x{2:X4})" -f $image.FullName, $machine, $expectedMachine)
+              }
+            } finally {
+              $stream.Dispose()
+            }
+          }
+          Write-Host "Verified $($images.Count) PE files for architecture ${{ matrix.arch }}"
           Compress-Archive -Path "$release/*" -DestinationPath "fwbuilder-6.0-win-${{ matrix.arch }}.zip"
       - name: Build NSIS installer
         shell: pwsh
