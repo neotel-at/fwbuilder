@@ -139,7 +139,11 @@ void FirewallCodeViewer::fileSelected(int idx)
     else
     {
         QFile f(this->files.at(idx));
-        f.open(QFile::ReadOnly);
+        if (!f.open(QFile::ReadOnly))
+        {
+            QMessageBox::warning(this, tr("Unable to open file"), f.errorString());
+            return;
+        }
         QTextBrowser *browser = new QTextBrowser(ui->pages);
         browser->setPlainText(f.readAll());
         ui->pages->addWidget(browser);
