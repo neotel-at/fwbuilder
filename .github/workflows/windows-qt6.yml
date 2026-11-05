@@ -46,9 +46,10 @@ jobs:
           cmake --install build-win --config Release
           $release = Join-Path (Resolve-Path build-win) 'release'
           if (!(Test-Path (Join-Path $release 'fwbuilder.exe'))) { throw 'fwbuilder.exe missing from install' }
-          $deploy = Join-Path $env:Qt6_DIR '../../../bin/windeployqt.exe'
-          $deploy = [System.IO.Path]::GetFullPath($deploy)
-          if (!(Test-Path $deploy)) { $deploy = (Get-Command windeployqt.exe -ErrorAction Stop).Source }
+          # install-qt-action adds the host-side Qt tools to PATH; Qt6_DIR is not
+          # guaranteed to be set (in particular for the ARM64 cross-build).
+          $deploy = (Get-Command windeployqt.exe -ErrorAction Stop).Source
+          Write-Host "Using windeployqt: $deploy"
           & $deploy --release --no-translations (Join-Path $release 'fwbuilder.exe')
           if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
           Compress-Archive -Path "$release/*" -DestinationPath "fwbuilder-6.0-win-${{ matrix.arch }}.zip"
