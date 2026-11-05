@@ -1,0 +1,54 @@
+name: Ubuntu 26.04 Qt 6 ARM64 DEB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/ubuntu26-qt6-arm64]
+    paths:
+      - '.github/workflows/ubuntu-2604-arm64.yml'
+      - '.github/scripts/build-ubuntu26-arm64-deb.sh'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+  pull_request:
+    paths:
+      - '.github/workflows/ubuntu-2604-arm64.yml'
+      - '.github/scripts/build-ubuntu26-arm64-deb.sh'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-2604-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native ARM64 package inside Ubuntu 26.04
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/workspace" -w /workspace ubuntu:26.04 \
+            bash .github/scripts/build-ubuntu26-arm64-deb.sh
+      - name: Verify dependencies and install on clean Ubuntu 26.04
+        run: |
+          set -eux
+          deb=fwbuilder-6.0.0-ubuntu26.04-arm64.deb
+          test "$(dpkg-deb -f "$deb" Architecture)" = arm64
+          dpkg-deb -f "$deb" Depends
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/packages:ro" ubuntu:26.04 bash -euxc '
+              apt-get update
+              apt-get install -y /packages/fwbuilder-6.0.0-ubuntu26.04-arm64.deb
+              dpkg --print-architecture | grep -qx arm64
+              ldd /usr/bin/fwbuilder | tee /tmp/fwb-ldd
+              ! grep -q "not found" /tmp/fwb-ldd
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fwbuilder-ubuntu26.04-arm64
+          path: fwbuilder-6.0.0-ubuntu26.04-arm64.deb
+          if-no-files-found: error
