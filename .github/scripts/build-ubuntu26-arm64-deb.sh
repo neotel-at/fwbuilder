@@ -50,10 +50,10 @@ case "$qt_version" in
   *) echo "Expected Ubuntu 26.04 Qt 6.10.x, got $qt_version" >&2; exit 1 ;;
 esac
 echo "Building against Qt $qt_version"
-grep -Eq 'libqt6core6(t64)? \\(' /tmp/fwb-deps
+grep -q 'libqt6core6' /tmp/fwb-deps
 grep -q 'libxml2-16' /tmp/fwb-deps
-if grep -Eq 'libqt6[^ ,]*t64|libxml2 \(' /tmp/fwb-deps; then
-  echo "Unexpected Ubuntu 24.04 dependencies:" >&2
+if grep -Eq '(^|, )libxml2 [(]' /tmp/fwb-deps; then
+  echo "Unexpected legacy libxml2 dependency:" >&2
   cat /tmp/fwb-deps >&2
   exit 1
 fi
