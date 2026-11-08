@@ -52,7 +52,12 @@ void importConfig(const string &import_config,
                   bool deduplicate)
 {
     QFile f(QString::fromUtf8(import_config.c_str()));
-    f.open(QFile::ReadOnly);
+    if (!f.open(QFile::ReadOnly))
+    {
+        cerr << "Cannot open configuration file '" << import_config
+             << "': " << f.errorString().toStdString() << endl;
+        exit(1);
+    }
     string buffer = QString(f.readAll()).toStdString();
     f.close();
 
