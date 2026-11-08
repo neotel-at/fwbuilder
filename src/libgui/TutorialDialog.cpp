@@ -69,9 +69,8 @@ void TutorialDialog::initializeTutorial(QString tutorial)
 
     QString stylefile = QString(":/Tutorial/") + this->tutorial + "/stylesheets/style.css";
     QFile f(stylefile);
-    if (f.exists())
+    if (f.open(QFile::ReadOnly))
     {
-        f.open(QFile::ReadOnly);
         css_stylesheet = f.readAll();
         doc->setDefaultStyleSheet(css_stylesheet);
         //ui->contents->setStyleSheet(stylesheet);
@@ -122,8 +121,9 @@ void TutorialDialog::showPage(int page)
     QString filename = QString(":/Tutorial/") + this->tutorial + "/html/page" + QString::number(page) + ".html";
     if (fwbdebug) qDebug() << filename;
     QFile src(filename);
-    src.open(QFile::ReadOnly);
-    QString text = src.readAll();
+    QString text;
+    if (src.open(QFile::ReadOnly))
+        text = src.readAll();
     doc->setHtml(text);
 
     ui->contents->scrollToAnchor("top");
