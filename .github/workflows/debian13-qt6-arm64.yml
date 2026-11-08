@@ -1,0 +1,115 @@
+name: Debian 13 Qt 6 ARM64 package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - integration/6.0.1-multiplatform
+      - master
+    paths:
+      - '.github/workflows/debian13-qt6-arm64.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+  pull_request:
+    paths:
+      - '.github/workflows/debian13-qt6-arm64.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ARM64 DEB on Debian 13
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git cmake ninja-build build-essential pkg-config \
+            qt6-base-dev qt6-base-dev-tools qt6-tools-dev-tools \
+            libxml2-dev libxslt1-dev libssl-dev libsnmp-dev \
+            libpcre2-dev zlib1g-dev liblzma-dev libudev-dev \
+            fakeroot file binutils
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify native ARM64 environment
+        run: |
+          test "$(dpkg --print-architecture)" = arm64
+          uname -m | grep -Eq '^(aarch64|arm64)$'
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-debian13-qt6-arm64 -G Ninja \
+            -DUseQt6=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build build-debian13-qt6-arm64 --parallel 2
+
+      - name: Package DEB
+        run: |
+          set -eu
+          cd build-debian13-qt6-arm64
+          cpack -G DEB \
+            -D CPACK_PACKAGE_NAME=fwbuilder \
+            -D CPACK_PACKAGE_FILE_NAME=fwbuilder-6.0.0-rc1-debian13-arm64 \
+            -D CPACK_DEBIAN_PACKAGE_MAINTAINER="Firewall Builder contributors" \
+            -D CPACK_DEBIAN_PACKAGE_SHLIBDEPS=ON \
+            -D CPACK_DEBIAN_PACKAGE_ARCHITECTURE=arm64
+          deb=fwbuilder-6.0.0-rc1-debian13-arm64.deb
+          test -s "$deb"
+          test "$(dpkg-deb -f "$deb" Architecture)" = arm64
+          dpkg-deb -f "$deb" Depends | tee /tmp/fwbuilder-depends
+          test -s /tmp/fwbuilder-depends
+
+      - name: Upload Debian ARM64 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fwbuilder-debian13-qt6-arm64
+          path: build-debian13-qt6-arm64/fwbuilder-6.0.0-rc1-debian13-arm64.deb
+          if-no-files-found: error
+
+  install-test:
+    name: Install DEB on clean Debian 13 ARM64
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fwbuilder-debian13-qt6-arm64
+          path: packages
+
+      - name: Install and verify ELF dependencies
+        run: |
+          set -eu
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            file binutils
+          test "$(dpkg --print-architecture)" = arm64
+          deb=packages/fwbuilder-6.0.0-rc1-debian13-arm64.deb
+          test "$(dpkg-deb -f "$deb" Architecture)" = arm64
+          dpkg-deb -f "$deb" Depends
+          DEBIAN_FRONTEND=noninteractive apt-get install -y "./$deb"
+          test -x /usr/bin/fwbuilder
+          readelf -h /usr/bin/fwbuilder | grep -q AArch64
+          ldd /usr/bin/fwbuilder | tee /tmp/fwbuilder-ldd
+          ! grep -q 'not found' /tmp/fwbuilder-ldd
+          if test -x /usr/bin/fwb_ipt; then
+            ldd /usr/bin/fwb_ipt | tee /tmp/fwb-ipt-ldd
+            ! grep -q 'not found' /tmp/fwb-ipt-ldd
+          fi
